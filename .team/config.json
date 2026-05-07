@@ -1,0 +1,15 @@
+{
+    "team_name": "Antigravity Squad",
+    "members": [
+        {
+            "name": "Alpha-Researcher",
+            "role": "Deep Web Researcher",
+            "status": "working"
+        },
+        {
+            "name": "Beta-Coder",
+            "role": "Frontend Refactoring",
+            "status": "idle"
+        }
+    ]
+}

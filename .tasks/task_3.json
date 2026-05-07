@@ -1,0 +1,9 @@
+{
+  "id": 3,
+  "subject": "测试任务2：验证任务依赖关联能力",
+  "description": "作为测试任务1的后置依赖任务，用于验证任务之间的阻塞关联关系设置功能是否正常工作",
+  "status": "expired",
+  "owner": null,
+  "blockedBy": [],
+  "blocks": []
+}

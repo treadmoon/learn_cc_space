@@ -1,65 +1,269 @@
-import Image from "next/image";
+"use client";
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { X } from 'lucide-react';
+import { TRANSLATIONS, type Lang } from '@/components/i18n';
+import { LeftPanel } from '@/components/LeftPanel';
+import { RightPanel } from '@/components/RightPanel';
+import { ChatPanel } from '@/components/ChatPanel';
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+    const [lang, setLang] = useState<Lang>('zh');
+    const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+    const [logs, setLogs] = useState<string[]>([]);
+    const [status, setStatus] = useState<'idle' | 'thinking' | 'executing_tools'>('idle');
+    const [globalState, setGlobalState] = useState<{
+        todos: Array<{ content: string; status: string; activeForm: string }>;
+        tasks: Array<{ id: number; subject: string; description: string; status: string; owner: string | null; blockedBy: number[]; blocks: number[] }>;
+        teammates: Array<{ name: string; role: string; status: string }>;
+        worktrees: string;
+        bgTasks: Array<{ id: string; command: string; status: string }>;
+        cronTasks: Array<{ id: string; command: string; intervalMs: number; lastRun: string | null; count: number }>;
+        artifacts: Array<{ taskId: number | null; files: Array<{ name: string; createdAt: string; size: number; description: string }> }>;
+        auditLog: Array<{ ts: string; action: string; taskId: number; actor: string; details: Record<string, unknown> }>;
+    }>({
+        todos: [], tasks: [], teammates: [], worktrees: '', bgTasks: [], cronTasks: [], artifacts: [], auditLog: []
+    });
+    const [telemetry, setTelemetry] = useState({ totalSession: 0, lastRequest: 0, totalRequests: 0 });
+    const [taskFilter, setTaskFilter] = useState<{ status?: string; owner?: string; keyword?: string }>({});
+
+    // Mobile drawer state
+    const [leftOpen, setLeftOpen] = useState(false);
+    const [rightOpen, setRightOpen] = useState(false);
+
+    const t = TRANSLATIONS[lang];
+
+    // Polling state
+    useEffect(() => {
+        let etag = '';
+        const fetchState = async () => {
+            try {
+                const headers: Record<string, string> = {};
+                if (etag) headers['If-None-Match'] = etag;
+                const params = new URLSearchParams();
+                if (taskFilter.status) params.set('status', taskFilter.status);
+                if (taskFilter.owner) params.set('owner', taskFilter.owner);
+                if (taskFilter.keyword) params.set('keyword', taskFilter.keyword);
+                const qs = params.toString();
+                const res = await fetch(`/api/state${qs ? '?' + qs : ''}`, { headers });
+                if (res.status === 304) return;
+                const newEtag = res.headers.get('ETag');
+                if (newEtag) etag = newEtag;
+                const data = await res.json();
+                setGlobalState({
+                    todos: data.todos || [], tasks: data.tasks || [],
+                    teammates: data.teammates || [], worktrees: data.worktrees || '',
+                    bgTasks: data.bgTasks || [], cronTasks: data.cronTasks || [],
+                    artifacts: data.artifacts || [], auditLog: data.auditLog || []
+                });
+                if (data.bgNotifs?.length) {
+                    setMessages(prev => [
+                        ...prev,
+                        ...data.bgNotifs.map((n: { task_id: string; status: string; result: string }) => ({
+                            role: 'assistant',
+                            content: `[BACKGROUND TASK: ${n.task_id}] Status: ${n.status}\nOutput:\n${n.result}`
+                        }))
+                    ]);
+                }
+            } catch {}
+        };
+        fetchState();
+        const interval = setInterval(fetchState, 2000);
+        return () => clearInterval(interval);
+    }, [taskFilter]);
+
+    const handleSend = useCallback(async (inputText: string) => {
+        if (!inputText.trim() || status !== 'idle') return;
+
+        const userMsg = { role: 'user', content: inputText };
+        const prevMessages = [...messages];
+        setMessages(prev => [...prev, userMsg]);
+        setStatus('thinking');
+        setLogs(prev => [...prev, '> User prompt sent']);
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: inputText, history: prevMessages })
+            });
+            if (!res.body) return;
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let done = false;
+            let buffer = '';
+
+            while (!done) {
+                const { value, done: doneReading } = await reader.read();
+                done = doneReading;
+                if (value) {
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop() || '';
+
+                    for (const block of lines) {
+                        const eventMatch = block.match(/event: (.*)\n/);
+                        const dataMatch = block.match(/data: ([\s\S]*)/);
+                        if (!eventMatch || !dataMatch) continue;
+
+                        const event = eventMatch[1];
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        let dataObj: any;
+                        try { dataObj = JSON.parse(dataMatch[1]); } catch { dataObj = dataMatch[1]; }
+
+                        switch (event) {
+                            case 'log': setLogs(prev => [...prev, dataObj]); break;
+                            case 'state': setStatus(dataObj.status); break;
+                            case 'message': setMessages(prev => [...prev, { role: 'assistant', content: dataObj.content }]); break;
+                            case 'telemetry':
+                                setTelemetry(prev => ({
+                                    totalSession: prev.totalSession + (dataObj.total_tokens || 0),
+                                    lastRequest: dataObj.total_tokens || 0,
+                                    totalRequests: prev.totalRequests + 1
+                                }));
+                                break;
+                            case 'done': setStatus('idle'); break;
+                            case 'error':
+                                setLogs(prev => [...prev, `[ERROR] ${dataObj.message}`]);
+                                setStatus('idle');
+                                break;
+                        }
+                    }
+                }
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setLogs(prev => [...prev, `[NETWORK_ERROR] ${message}`]);
+            setStatus('idle');
+        }
+    }, [messages, status]);
+
+    const handleAbort = useCallback(async () => {
+        setLogs(prev => [...prev, '> Abort signal sent']);
+        try { await fetch('/api/chat/abort', { method: 'POST' }); } catch {}
+    }, []);
+
+    const toggleTodo = useCallback(async (idx: number, currentStatus: string) => {
+        const nextStatus = currentStatus === 'completed' ? 'pending' : currentStatus === 'pending' ? 'in_progress' : 'completed';
+        setGlobalState(prev => {
+            const todos = [...prev.todos];
+            todos[idx] = { ...todos[idx], status: nextStatus };
+            return { ...prev, todos };
+        });
+        try {
+            await fetch('/api/todos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index: idx, status: nextStatus })
+            });
+        } catch {}
+    }, []);
+
+    const handleCreateTask = useCallback(async (subject: string, description: string) => {
+        try {
+            await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subject, description })
+            });
+        } catch {}
+    }, []);
+
+    const handleUpdateTaskStatus = useCallback(async (id: number, status: string) => {
+        setGlobalState(prev => ({
+            ...prev,
+            tasks: prev.tasks.map(t => t.id === id ? { ...t, status } : t)
+        }));
+        try {
+            const res = await fetch('/api/tasks', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, status })
+            });
+            if (!res.ok) throw new Error('Failed');
+        } catch {
+            // Revert on error by re-fetching
+            setGlobalState(prev => ({ ...prev }));
+        }
+    }, []);
+
+    const handleDeleteTask = useCallback(async (id: number) => {
+        setGlobalState(prev => ({
+            ...prev,
+            tasks: prev.tasks.filter(t => t.id !== id)
+        }));
+        try {
+            await fetch('/api/tasks', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id })
+            });
+        } catch {}
+    }, []);
+
+    return (
+        <div className="flex h-screen w-full overflow-hidden p-2 md:p-4 gap-2 md:gap-4">
+            {/* Left Panel — desktop */}
+            <div className="hidden md:flex flex-col w-64 xl:w-72 panel-side rounded-2xl overflow-hidden shrink-0">
+                <LeftPanel
+                    t={t}
+                    todos={globalState.todos}
+                    tasks={globalState.tasks}
+                    worktrees={globalState.worktrees}
+                    artifacts={globalState.artifacts}
+                    onToggleTodo={toggleTodo}
+                    taskFilter={taskFilter}
+                    onTaskFilterChange={setTaskFilter}
+                    onCreateTask={handleCreateTask}
+                    onUpdateTaskStatus={handleUpdateTaskStatus}
+                    onDeleteTask={handleDeleteTask}
+                />
+            </div>
+
+            {/* Mobile drawer — left */}
+            {leftOpen && (
+                <div className="fixed inset-0 z-50 md:hidden flex">
+                    <div className="w-72 max-w-[80vw] panel-side h-full relative">
+                        <button onClick={() => setLeftOpen(false)} className="absolute top-3 right-3 p-1 rounded-lg hover:bg-white/10 text-gray-400 z-10">
+                            <X className="w-4 h-4" />
+                        </button>
+                        <LeftPanel t={t} todos={globalState.todos} tasks={globalState.tasks} worktrees={globalState.worktrees} artifacts={globalState.artifacts} onToggleTodo={toggleTodo} taskFilter={taskFilter} onTaskFilterChange={setTaskFilter} onCreateTask={handleCreateTask} onUpdateTaskStatus={handleUpdateTaskStatus} onDeleteTask={handleDeleteTask} />
+                    </div>
+                    <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={() => setLeftOpen(false)} />
+                </div>
+            )}
+
+            {/* Chat Panel */}
+            <ChatPanel
+                t={t}
+                lang={lang}
+                onToggleLang={() => setLang(l => l === 'zh' ? 'en' : 'zh')}
+                messages={messages}
+                status={status}
+                onSend={handleSend}
+                onAbort={handleAbort}
+                onToggleLeft={() => setLeftOpen(true)}
+                onToggleRight={() => setRightOpen(true)}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+            {/* Right Panel — desktop */}
+            <div className="hidden lg:flex flex-col w-72 xl:w-80 panel-side rounded-2xl overflow-hidden shrink-0">
+                <RightPanel t={t} telemetry={telemetry} teammates={globalState.teammates} bgTasks={globalState.bgTasks} cronTasks={globalState.cronTasks} logs={logs} agentStatus={status} auditLog={globalState.auditLog} />
+            </div>
+
+            {/* Mobile drawer — right */}
+            {rightOpen && (
+                <div className="fixed inset-0 z-50 lg:hidden flex justify-end">
+                    <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={() => setRightOpen(false)} />
+                    <div className="w-80 max-w-[85vw] panel-side h-full relative">
+                        <button onClick={() => setRightOpen(false)} className="absolute top-3 right-3 p-1 rounded-lg hover:bg-white/10 text-gray-400 z-10">
+                            <X className="w-4 h-4" />
+                        </button>
+                        <RightPanel t={t} telemetry={telemetry} teammates={globalState.teammates} bgTasks={globalState.bgTasks} cronTasks={globalState.cronTasks} logs={logs} agentStatus={status} auditLog={globalState.auditLog} />
+                    </div>
+                </div>
+            )}
         </div>
-      </main>
-    </div>
-  );
+    );
 }

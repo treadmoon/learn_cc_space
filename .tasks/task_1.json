@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "subject": "测试任务",
+  "description": "当前目录下的示例测试任务，用于验证任务创建功能正常运行",
+  "status": "completed",
+  "owner": null,
+  "blockedBy": [],
+  "blocks": []
+}

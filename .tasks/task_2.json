@@ -1,0 +1,9 @@
+{
+  "id": 2,
+  "subject": "测试任务1：验证任务创建能力",
+  "description": "用于测试task_create接口是否能正常生成持久化任务记录，属于任务系统全功能测试的第一个步骤",
+  "status": "completed",
+  "owner": null,
+  "blockedBy": [],
+  "blocks": []
+}
