@@ -46,6 +46,12 @@ export const TRANSLATIONS = {
         thinking: "思维过程",
         tabWorkflow: "流程",
         tabLogs: "日志",
+        newSession: "新建会话",
+        sessions: "会话列表",
+        deleteSession: "删除会话",
+        confirmDeleteSession: "确认删除此会话？",
+        noSessions: "暂无会话记录。",
+        sessionUntitled: "未命名会话",
     },
     en: {
         localOps: "LOCAL OPERATIONS",
@@ -94,6 +100,12 @@ export const TRANSLATIONS = {
         thinking: "Thinking Process",
         tabWorkflow: "Flow",
         tabLogs: "Logs",
+        newSession: "New Session",
+        sessions: "Sessions",
+        deleteSession: "Delete Session",
+        confirmDeleteSession: "Delete this session?",
+        noSessions: "No sessions yet.",
+        sessionUntitled: "Untitled Session",
     }
 } as const;
 

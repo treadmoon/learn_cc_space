@@ -557,6 +557,102 @@ export class ArtifactManager {
     }
 }
 
+const SESSIONS_DIR = path.join(WORKDIR, '.sessions');
+
+export interface SessionData {
+    id: string;
+    title: string;
+    messages: Array<{ role: string; content: string }>;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface SessionSummary {
+    id: string;
+    title: string;
+    messageCount: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export class SessionManager {
+    constructor() {
+        mkdirSync(SESSIONS_DIR);
+    }
+
+    private _path(id: string): string {
+        return path.join(SESSIONS_DIR, `${id}.json`);
+    }
+
+    private _read(id: string): SessionData | null {
+        const p = this._path(id);
+        if (!fs.existsSync(p)) return null;
+        try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+    }
+
+    private _write(data: SessionData) {
+        fs.writeFileSync(this._path(data.id), JSON.stringify(data, null, 2), 'utf8');
+    }
+
+    create(): SessionData {
+        const now = new Date().toISOString();
+        const data: SessionData = {
+            id: randomUUID(),
+            title: 'New Session',
+            messages: [],
+            createdAt: now,
+            updatedAt: now,
+        };
+        this._write(data);
+        return data;
+    }
+
+    list(): SessionSummary[] {
+        if (!fs.existsSync(SESSIONS_DIR)) return [];
+        const files = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.json'));
+        const summaries: SessionSummary[] = [];
+        for (const file of files) {
+            try {
+                const data: SessionData = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, file), 'utf8'));
+                summaries.push({
+                    id: data.id,
+                    title: data.title,
+                    messageCount: data.messages.length,
+                    createdAt: data.createdAt,
+                    updatedAt: data.updatedAt,
+                });
+            } catch { /* skip corrupt files */ }
+        }
+        return summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }
+
+    get(id: string): SessionData | null {
+        return this._read(id);
+    }
+
+    update(id: string, messages: Array<{ role: string; content: string }>, title?: string): void {
+        const data = this._read(id);
+        if (!data) return;
+        data.messages = messages;
+        data.updatedAt = new Date().toISOString();
+        if (title) data.title = title;
+        this._write(data);
+    }
+
+    delete(id: string): boolean {
+        const p = this._path(id);
+        if (!fs.existsSync(p)) return false;
+        fs.unlinkSync(p);
+        return true;
+    }
+
+    getLatest(): SessionData | null {
+        const list = this.list();
+        if (!list.length) return null;
+        return this._read(list[0].id);
+    }
+}
+
 const globalForAgent = global as unknown as {
     TODO: TodoManager;
     TASK_MGR: TaskManager;
@@ -567,6 +663,7 @@ const globalForAgent = global as unknown as {
     TEAM_MGR: TeammateManager;
     WORKTREE_MGR: WorktreeManager;
     ARTIFACT_MGR: ArtifactManager;
+    SESSION_MGR: SessionManager;
 };
 
 export const TODO = globalForAgent.TODO || new TodoManager();
@@ -578,6 +675,7 @@ export const BUS = globalForAgent.BUS || new MessageBus();
 export const TEAM_MGR = globalForAgent.TEAM_MGR || new TeammateManager();
 export const WORKTREE_MGR = globalForAgent.WORKTREE_MGR || new WorktreeManager();
 export const ARTIFACT_MGR = globalForAgent.ARTIFACT_MGR || new ArtifactManager();
+export const SESSION_MGR = globalForAgent.SESSION_MGR || new SessionManager();
 
 if (process.env.NODE_ENV !== 'production') {
     globalForAgent.TODO = TODO;
@@ -589,6 +687,7 @@ if (process.env.NODE_ENV !== 'production') {
     globalForAgent.TEAM_MGR = TEAM_MGR;
     globalForAgent.WORKTREE_MGR = WORKTREE_MGR;
     globalForAgent.ARTIFACT_MGR = ARTIFACT_MGR;
+    globalForAgent.SESSION_MGR = SESSION_MGR;
 }
 
 export function microCompact(messages: any[], targetRecent = 3) {

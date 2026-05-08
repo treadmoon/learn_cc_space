@@ -1,18 +1,24 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Send, Loader2, Globe, Square, PanelLeftOpen, PanelRightOpen, Terminal, Sparkles } from 'lucide-react';
+import { Send, Loader2, Globe, Square, PanelLeftOpen, PanelRightOpen, Terminal, Sparkles, Plus, MessageSquare, ChevronDown, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { T, Lang } from './i18n';
 
 interface Message { role: string; content: string; }
+interface SessionSummary { id: string; title: string; messageCount: number; createdAt: string; updatedAt: string; }
 
 interface Props {
     t: T; lang: Lang; onToggleLang: () => void;
     messages: Message[]; status: 'idle' | 'thinking' | 'executing_tools';
     onSend: (msg: string) => void; onAbort: () => void;
     onToggleLeft?: () => void; onToggleRight?: () => void;
+    sessions: SessionSummary[];
+    currentSessionId: string | null;
+    onNewSession: () => void;
+    onSwitchSession: (id: string) => void;
+    onDeleteSession: (id: string) => void;
 }
 
 function parseThinkingBlocks(content: string) {
@@ -30,12 +36,22 @@ function parseThinkingBlocks(content: string) {
     return parts;
 }
 
-export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onAbort, onToggleLeft, onToggleRight }: Props) {
+export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onAbort, onToggleLeft, onToggleRight, sessions, currentSessionId, onNewSession, onSwitchSession, onDeleteSession }: Props) {
     const [input, setInput] = useState('');
     const scrollRef = useRef<HTMLDivElement>(null);
     const taRef = useRef<HTMLTextAreaElement>(null);
+    const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+    const sessionMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, status]);
+    useEffect(() => {
+        if (!sessionMenuOpen) return;
+        const handler = (e: MouseEvent) => {
+            if (sessionMenuRef.current && !sessionMenuRef.current.contains(e.target as Node)) setSessionMenuOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [sessionMenuOpen]);
     const adjustHeight = useCallback(() => {
         const el = taRef.current;
         if (!el) return;
@@ -59,8 +75,44 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                     </button>
                 )}
                 <Terminal className="w-4 h-4 text-[#38BDF8]" />
-                <h1 className="text-[13px] font-semibold text-[var(--text-primary)]">{t.title}</h1>
-                <span className="tag tag-sky hidden sm:inline">{t.leadAgent}</span>
+                <h1 className="text-[13px] font-semibold text-[var(--text-primary)] hidden sm:block">{t.title}</h1>
+
+                {/* Session selector */}
+                <div className="relative ml-1" ref={sessionMenuRef}>
+                    <button onClick={() => setSessionMenuOpen(!sessionMenuOpen)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--bg-3)] hover:bg-[var(--bg-4)] text-[12px] text-[var(--text-secondary)] transition-colors max-w-[180px]">
+                        <MessageSquare className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{sessions.find(s => s.id === currentSessionId)?.title || t.sessionUntitled}</span>
+                        <ChevronDown className="w-3 h-3 shrink-0" />
+                    </button>
+                    {sessionMenuOpen && (
+                        <div className="absolute top-full left-0 mt-1 w-64 bg-[var(--bg-2)] border border-[var(--bg-4)] rounded-xl shadow-2xl z-50 overflow-hidden animate-in">
+                            <button onClick={() => { onNewSession(); setSessionMenuOpen(false); }}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-[#38BDF8] hover:bg-[var(--bg-3)] transition-colors border-b border-[var(--bg-4)]">
+                                <Plus className="w-3.5 h-3.5" />{t.newSession}
+                            </button>
+                            <div className="max-h-60 overflow-y-auto">
+                                {sessions.length === 0 ? (
+                                    <div className="px-3 py-4 text-[11px] text-[var(--text-ghost)] text-center">{t.noSessions}</div>
+                                ) : sessions.map(s => (
+                                    <div key={s.id}
+                                        className={`flex items-center gap-2 px-3 py-2 text-[12px] cursor-pointer transition-colors group ${s.id === currentSessionId ? 'bg-[var(--bg-3)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-3)]'}`}
+                                        onClick={() => { onSwitchSession(s.id); setSessionMenuOpen(false); }}>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="truncate font-medium">{s.title || t.sessionUntitled}</div>
+                                            <div className="text-[10px] text-[var(--text-ghost)]">{s.messageCount} msgs</div>
+                                        </div>
+                                        <button onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id); }}
+                                            className="p-1 rounded hover:bg-red-500/20 text-[var(--text-ghost)] hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all">
+                                            <Trash2 className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 <div className="ml-auto flex items-center gap-2">
                     <button onClick={onToggleLang}
                         className="text-[11px] px-2.5 py-1 rounded-md bg-[var(--bg-4)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X } from 'lucide-react';
 import { TRANSLATIONS, type Lang } from '@/components/i18n';
 import { LeftPanel } from '@/components/LeftPanel';
@@ -30,6 +30,12 @@ export default function Home() {
     // Mobile drawer state
     const [leftOpen, setLeftOpen] = useState(false);
     const [rightOpen, setRightOpen] = useState(false);
+
+    // Session state
+    const [sessions, setSessions] = useState<{ id: string; title: string; messageCount: number; createdAt: string; updatedAt: string }[]>([]);
+    const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+    const messagesRef = useRef(messages);
+    useEffect(() => { messagesRef.current = messages; }, [messages]);
 
     const t = TRANSLATIONS[lang];
 
@@ -72,8 +78,51 @@ export default function Home() {
         return () => clearInterval(interval);
     }, [taskFilter]);
 
+    // Load sessions on mount
+    useEffect(() => {
+        fetch('/api/sessions')
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && data.data?.length) {
+                    setSessions(data.data);
+                    // Auto-restore the latest session
+                    const latest = data.data[0];
+                    fetch(`/api/sessions?id=${latest.id}`)
+                        .then(r => r.json())
+                        .then(sd => {
+                            if (sd.success && sd.data) {
+                                setCurrentSessionId(sd.data.id);
+                                setMessages(sd.data.messages || []);
+                            }
+                        }).catch(() => {});
+                }
+            })
+            .catch(() => {});
+    }, []);
+
+    const refreshSessions = useCallback(async () => {
+        try {
+            const res = await fetch('/api/sessions');
+            const data = await res.json();
+            if (data.success) setSessions(data.data || []);
+        } catch {}
+    }, []);
+
     const handleSend = useCallback(async (inputText: string) => {
         if (!inputText.trim() || status !== 'idle') return;
+
+        // Auto-create session if none exists
+        let activeSessionId = currentSessionId;
+        if (!activeSessionId) {
+            try {
+                const res = await fetch('/api/sessions', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    activeSessionId = data.data.id;
+                    setCurrentSessionId(data.data.id);
+                }
+            } catch {}
+        }
 
         const userMsg = { role: 'user', content: inputText };
         const prevMessages = [...messages];
@@ -123,7 +172,19 @@ export default function Home() {
                                     totalRequests: prev.totalRequests + 1
                                 }));
                                 break;
-                            case 'done': setStatus('idle'); break;
+                            case 'done':
+                                setStatus('idle');
+                                // Auto-save session after streaming completes
+                                if (activeSessionId) {
+                                    const finalMsgs = messagesRef.current;
+                                    const title = prevMessages.length === 0 ? inputText.slice(0, 40) : undefined;
+                                    fetch('/api/sessions', {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ id: activeSessionId, messages: finalMsgs, title })
+                                    }).then(() => refreshSessions()).catch(() => {});
+                                }
+                                break;
                             case 'error':
                                 setLogs(prev => [...prev, `[ERROR] ${dataObj.message}`]);
                                 setStatus('idle');
@@ -137,12 +198,54 @@ export default function Home() {
             setLogs(prev => [...prev, `[NETWORK_ERROR] ${message}`]);
             setStatus('idle');
         }
-    }, [messages, status]);
+    }, [messages, status, currentSessionId, refreshSessions]);
 
     const handleAbort = useCallback(async () => {
         setLogs(prev => [...prev, '> Abort signal sent']);
         try { await fetch('/api/chat/abort', { method: 'POST' }); } catch {}
     }, []);
+
+    const handleNewSession = useCallback(async () => {
+        try {
+            const res = await fetch('/api/sessions', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                setCurrentSessionId(data.data.id);
+                setMessages([]);
+                setLogs([]);
+                setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0 });
+                await refreshSessions();
+            }
+        } catch {}
+    }, [refreshSessions]);
+
+    const handleSwitchSession = useCallback(async (id: string) => {
+        try {
+            const res = await fetch(`/api/sessions?id=${id}`);
+            const data = await res.json();
+            if (data.success && data.data) {
+                setCurrentSessionId(data.data.id);
+                setMessages(data.data.messages || []);
+                setLogs([]);
+                setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0 });
+            }
+        } catch {}
+    }, []);
+
+    const handleDeleteSession = useCallback(async (id: string) => {
+        try {
+            await fetch(`/api/sessions?id=${id}`, { method: 'DELETE' });
+            const remaining = sessions.filter(s => s.id !== id);
+            setSessions(remaining);
+            if (currentSessionId === id) {
+                if (remaining.length > 0) {
+                    await handleSwitchSession(remaining[0].id);
+                } else {
+                    await handleNewSession();
+                }
+            }
+        } catch {}
+    }, [sessions, currentSessionId, handleSwitchSession, handleNewSession]);
 
     const toggleTodo = useCallback(async (idx: number, currentStatus: string) => {
         const nextStatus = currentStatus === 'completed' ? 'pending' : currentStatus === 'pending' ? 'in_progress' : 'completed';
@@ -245,6 +348,11 @@ export default function Home() {
                 onAbort={handleAbort}
                 onToggleLeft={() => setLeftOpen(true)}
                 onToggleRight={() => setRightOpen(true)}
+                sessions={sessions}
+                currentSessionId={currentSessionId}
+                onNewSession={handleNewSession}
+                onSwitchSession={handleSwitchSession}
+                onDeleteSession={handleDeleteSession}
             />
 
             {/* Right Panel — desktop */}
