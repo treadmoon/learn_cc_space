@@ -90,7 +90,7 @@ export function parseLogsToSteps(entries: LogEntry[]): WorkflowStep[] {
 }
 
 /** Group log entries by requestId */
-function groupByRequest(entries: LogEntry[]): RequestGroup[] {
+export function groupByRequest(entries: LogEntry[]): RequestGroup[] {
     const groups = new Map<string, LogEntry[]>();
     for (const entry of entries) {
         const key = entry.reqId || 'unknown';

@@ -1,24 +1,59 @@
 "use client";
 
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Send, Loader2, Globe, Square, PanelLeftOpen, PanelRightOpen, Terminal, Sparkles, Plus, MessageSquare, ChevronDown, Trash2 } from 'lucide-react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { Send, Loader2, Globe, Square, PanelLeftOpen, PanelRightOpen, Terminal, Sparkles, Plus, MessageSquare, ChevronDown, Trash2, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { T, Lang } from './i18n';
+import { FlowOverlay } from './FlowOverlay';
+import type { LogEntry } from './WorkflowView';
 
-interface Message { role: string; content: string; }
+export interface Attachment {
+    name: string;
+    type: string;
+    data: string;   // base64 without data: prefix
+    size: number;
+}
+
+export interface Message {
+    id?: string;
+    role: string;
+    content: string;
+    attachments?: Attachment[];
+}
+
 interface SessionSummary { id: string; title: string; messageCount: number; createdAt: string; updatedAt: string; }
+
+interface SlashCommand {
+    name: string;
+    labelKey: keyof T;
+    descKey: keyof T;
+    action: 'input' | 'callback';
+    insertText?: string;
+    callbackKey?: string;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+    { name: 'clear', labelKey: 'slashClear', descKey: 'slashClearDesc', action: 'callback', callbackKey: 'clear' },
+    { name: 'new', labelKey: 'slashNew', descKey: 'slashNewDesc', action: 'callback', callbackKey: 'new' },
+    { name: 'compress', labelKey: 'slashCompress', descKey: 'slashCompressDesc', action: 'input', insertText: '/compress' },
+    { name: 'tasks', labelKey: 'slashTasks', descKey: 'slashTasksDesc', action: 'input', insertText: '请列出所有任务' },
+    { name: 'help', labelKey: 'slashHelp', descKey: 'slashHelpDesc', action: 'input', insertText: '请介绍你的功能和可用工具' },
+];
 
 interface Props {
     t: T; lang: Lang; onToggleLang: () => void;
     messages: Message[]; status: 'idle' | 'thinking' | 'executing_tools';
-    onSend: (msg: string) => void; onAbort: () => void;
+    onSend: (msg: string, attachments: Attachment[]) => void; onAbort: () => void;
     onToggleLeft?: () => void; onToggleRight?: () => void;
     sessions: SessionSummary[];
     currentSessionId: string | null;
     onNewSession: () => void;
     onSwitchSession: (id: string) => void;
     onDeleteSession: (id: string) => void;
+    onClearMessages?: () => void;
+    logs?: LogEntry[];
+    agentStatus?: 'idle' | 'thinking' | 'executing_tools';
 }
 
 function parseThinkingBlocks(content: string) {
@@ -36,14 +71,91 @@ function parseThinkingBlocks(content: string) {
     return parts;
 }
 
-export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onAbort, onToggleLeft, onToggleRight, sessions, currentSessionId, onNewSession, onSwitchSession, onDeleteSession }: Props) {
+export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onAbort, onToggleLeft, onToggleRight, sessions, currentSessionId, onNewSession, onSwitchSession, onDeleteSession, onClearMessages, logs, agentStatus }: Props) {
+    const [flowDismissed, setFlowDismissed] = useState(false);
     const [input, setInput] = useState('');
     const scrollRef = useRef<HTMLDivElement>(null);
     const taRef = useRef<HTMLTextAreaElement>(null);
     const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
     const sessionMenuRef = useRef<HTMLDivElement>(null);
+    const [attachments, setAttachments] = useState<Attachment[]>([]);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [dragging, setDragging] = useState(false);
+    const [slashMenu, setSlashMenu] = useState<{ open: boolean; filter: string; selectedIdx: number }>({ open: false, filter: '', selectedIdx: 0 });
+    const blurTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    const MAX_FILES = 5;
+
+    const processFiles = useCallback(async (files: FileList | File[]) => {
+        const fileArray = Array.from(files);
+        const remaining = MAX_FILES - attachments.length;
+        if (remaining <= 0) return;
+
+        const toProcess = fileArray.slice(0, remaining);
+        const newAttachments: Attachment[] = [];
+
+        for (const file of toProcess) {
+            if (file.size > MAX_FILE_SIZE) continue;
+            try {
+                const base64 = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+                newAttachments.push({ name: file.name, type: file.type, data: base64, size: file.size });
+            } catch { /* skip */ }
+        }
+
+        setAttachments(prev => [...prev, ...newAttachments]);
+    }, [attachments.length]);
+
+    const removeAttachment = useCallback((idx: number) => {
+        setAttachments(prev => prev.filter((_, i) => i !== idx));
+    }, []);
+
+    const filteredCommands = useMemo(() =>
+        slashMenu.open
+            ? SLASH_COMMANDS.filter(cmd => cmd.name.startsWith(slashMenu.filter.toLowerCase()))
+            : [],
+        [slashMenu.open, slashMenu.filter]
+    );
+
+    const executeCommand = useCallback((cmd: SlashCommand) => {
+        setSlashMenu({ open: false, filter: '', selectedIdx: 0 });
+        if (cmd.action === 'callback') {
+            if (cmd.callbackKey === 'clear') {
+                onClearMessages?.();
+                setInput('');
+            } else if (cmd.callbackKey === 'new') {
+                onNewSession();
+                setInput('');
+            }
+        } else if (cmd.insertText) {
+            setInput(cmd.insertText);
+            taRef.current?.focus();
+        }
+    }, [onClearMessages, onNewSession]);
+
+    const handleDragOver = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setDragging(true);
+    }, []);
+
+    const handleDragLeave = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setDragging(false);
+    }, []);
+
+    const handleDrop = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setDragging(false);
+        if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
+    }, [processFiles]);
 
     useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, status]);
+    useEffect(() => { if (agentStatus && agentStatus !== 'idle') setFlowDismissed(false); }, [agentStatus]);
     useEffect(() => {
         if (!sessionMenuOpen) return;
         const handler = (e: MouseEvent) => {
@@ -52,6 +164,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
     }, [sessionMenuOpen]);
+    useEffect(() => () => { if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current); }, []);
     const adjustHeight = useCallback(() => {
         const el = taRef.current;
         if (!el) return;
@@ -62,8 +175,8 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
 
     const submit = (e?: React.FormEvent) => {
         e?.preventDefault();
-        if (!input.trim() || status !== 'idle') return;
-        onSend(input); setInput('');
+        if ((!input.trim() && attachments.length === 0) || status !== 'idle') return;
+        onSend(input, attachments); setInput(''); setAttachments([]);
     };
 
     return (
@@ -126,6 +239,11 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                 </div>
             </div>
 
+            {/* Flow Overlay — floats at top of chat area */}
+            {logs && agentStatus && !flowDismissed && (
+                <FlowOverlay logs={logs} agentStatus={agentStatus} t={t} onDismiss={() => setFlowDismissed(true)} />
+            )}
+
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 scrollbar-hide flex flex-col">
                 {messages.length === 0 && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-4">
@@ -138,14 +256,31 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                 )}
 
                 {messages.map((m, i) => (
-                    <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in`}>
+                    <div key={m.id ?? i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in`}>
                         <div className={`max-w-[90%] md:max-w-[80%] rounded-2xl px-4 py-3 ${
                             m.role === 'user'
                                 ? 'bg-[#38BDF8]/10 text-[var(--text-primary)]'
                                 : 'card text-[var(--text-secondary)]'
                         }`}>
                             {m.role === 'user' ? (
-                                <pre className="whitespace-pre-wrap text-[13px] leading-relaxed" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>{m.content}</pre>
+                                <div>
+                                    {m.attachments && m.attachments.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 mb-2">
+                                            {m.attachments.map((att, ai) => (
+                                                att.type.startsWith('image/') ? (
+                                                    <img key={ai} src={`data:${att.type};base64,${att.data}`} alt={att.name}
+                                                        className="max-w-[200px] max-h-[150px] rounded-lg object-cover border border-[var(--bg-4)]" />
+                                                ) : (
+                                                    <div key={ai} className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--bg-3)] text-[11px] text-[var(--text-secondary)]">
+                                                        <FileText className="w-3 h-3 shrink-0" />
+                                                        <span className="truncate max-w-[120px]">{att.name}</span>
+                                                    </div>
+                                                )
+                                            ))}
+                                        </div>
+                                    )}
+                                    {m.content && <pre className="whitespace-pre-wrap text-[13px] leading-relaxed" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>{m.content}</pre>}
+                                </div>
                             ) : (
                                 <div className="space-y-3">
                                     {parseThinkingBlocks(m.content).map((part, pIdx) => {
@@ -176,7 +311,13 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                                                 prose-table:text-xs prose-table:font-mono
                                                 prose-th:text-[var(--text-secondary)]
                                                 prose-li:text-[var(--text-secondary)]">
-                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.content}</ReactMarkdown>
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}
+                                                    components={{
+                                                        img: ({ src, alt }) => (
+                                                            <img src={src} alt={alt || ''} className="max-w-full rounded-lg my-2 border border-[var(--bg-4)]" loading="lazy" />
+                                                        )
+                                                    }}
+                                                >{part.content}</ReactMarkdown>
                                             </div>
                                         );
                                     })}
@@ -199,19 +340,122 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                 )}
             </div>
 
-            <div className="p-3 md:p-4 bg-[var(--bg-1)] shrink-0">
+            <div className="p-3 md:p-4 bg-[var(--bg-1)] shrink-0"
+                onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+                {dragging && (
+                    <div className="absolute inset-0 z-40 bg-[var(--bg-0)]/80 backdrop-blur-sm flex items-center justify-center rounded-2xl border-2 border-dashed border-[#38BDF8]">
+                        <div className="text-center">
+                            <Paperclip className="w-8 h-8 text-[#38BDF8] mx-auto mb-2" />
+                            <p className="text-[13px] text-[var(--text-secondary)]">{t.dropFiles}</p>
+                        </div>
+                    </div>
+                )}
+                {attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                        {attachments.map((att, i) => (
+                            <div key={i} className="relative group flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-lg bg-[var(--bg-3)] border border-[var(--bg-4)]">
+                                {att.type.startsWith('image/') ? (
+                                    <img src={`data:${att.type};base64,${att.data}`} alt={att.name}
+                                        className="w-8 h-8 rounded object-cover" />
+                                ) : (
+                                    <div className="w-8 h-8 rounded bg-[var(--bg-0)] flex items-center justify-center">
+                                        <FileText className="w-4 h-4 text-[var(--text-muted)]" />
+                                    </div>
+                                )}
+                                <div className="min-w-0">
+                                    <div className="text-[11px] text-[var(--text-secondary)] truncate max-w-[100px]">{att.name}</div>
+                                    <div className="text-[9px] text-[var(--text-ghost)]">{att.size > 1024 * 1024 ? `${(att.size / 1024 / 1024).toFixed(1)}MB` : `${(att.size / 1024).toFixed(0)}KB`}</div>
+                                </div>
+                                <button onClick={() => removeAttachment(i)}
+                                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[var(--bg-4)] text-[var(--text-ghost)] hover:bg-red-500/30 hover:text-red-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
+                                    <Trash2 className="w-2.5 h-2.5" />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                <input ref={fileInputRef} type="file" multiple className="hidden"
+                    accept="image/*,text/*,.md,.json,.csv,.xml,.yaml,.yml,.ts,.js,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.css,.html,.sql,.sh"
+                    onChange={(e) => { if (e.target.files) processFiles(e.target.files); e.target.value = ''; }} />
                 <form onSubmit={submit} className="relative flex items-end">
+                    {slashMenu.open && filteredCommands.length > 0 && (
+                        <div role="listbox" aria-label={t.slashCommands}
+                            className="absolute bottom-full left-0 right-0 mb-1 bg-[var(--bg-2)] border border-[var(--bg-4)] rounded-xl shadow-2xl z-50 overflow-hidden">
+                            <div className="px-2.5 py-1.5 text-[10px] text-[var(--text-ghost)] uppercase tracking-wider font-mono">
+                                {t.slashCommands}
+                            </div>
+                            {filteredCommands.map((cmd, i) => (
+                                <button key={cmd.name} type="button" role="option" id={`slash-opt-${cmd.name}`}
+                                    aria-selected={i === slashMenu.selectedIdx}
+                                    className={`w-full flex items-center gap-3 px-3 py-2 text-[12px] transition-colors ${
+                                        i === slashMenu.selectedIdx ? 'bg-[var(--bg-3)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-3)]'
+                                    }`}
+                                    onMouseDown={(e) => { e.preventDefault(); executeCommand(cmd); }}
+                                    onMouseEnter={() => setSlashMenu(prev => ({ ...prev, selectedIdx: i }))}>
+                                    <span className="font-mono text-[#38BDF8]">/{cmd.name}</span>
+                                    <span className="text-[var(--text-ghost)]">{t[cmd.descKey]}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     <span className="absolute left-3.5 bottom-3 font-mono text-[12px] text-[#38BDF8]/40 select-none pointer-events-none">❯</span>
                     <textarea ref={taRef} value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            setInput(val);
+                            const cursorPos = e.target.selectionStart || val.length;
+                            const textBeforeCursor = val.slice(0, cursorPos);
+                            const slashMatch = textBeforeCursor.match(/(?:^|\s)\/([a-zA-Z]*)$/);
+                            if (slashMatch) {
+                                setSlashMenu({ open: true, filter: slashMatch[1], selectedIdx: 0 });
+                            } else {
+                                setSlashMenu(prev => prev.open ? { ...prev, open: false } : prev);
+                            }
+                        }}
+                        onKeyDown={(e) => {
+                            if (slashMenu.open && filteredCommands.length > 0) {
+                                if (e.key === 'ArrowDown') {
+                                    e.preventDefault();
+                                    setSlashMenu(prev => ({ ...prev, selectedIdx: (prev.selectedIdx + 1) % filteredCommands.length }));
+                                    return;
+                                }
+                                if (e.key === 'ArrowUp') {
+                                    e.preventDefault();
+                                    setSlashMenu(prev => ({ ...prev, selectedIdx: (prev.selectedIdx - 1 + filteredCommands.length) % filteredCommands.length }));
+                                    return;
+                                }
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    executeCommand(filteredCommands[slashMenu.selectedIdx]);
+                                    return;
+                                }
+                                if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    setSlashMenu({ open: false, filter: '', selectedIdx: 0 });
+                                    return;
+                                }
+                            }
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+                        }}
+                        onBlur={() => { blurTimeoutRef.current = setTimeout(() => setSlashMenu({ open: false, filter: '', selectedIdx: 0 }), 150); }}
                         placeholder={t.placeholder} rows={1}
-                        className="w-full bg-[var(--bg-0)] border border-[var(--bg-4)] rounded-xl py-2.5 pl-9 pr-11 text-[13px] text-[var(--text-primary)] focus:outline-none glow-focus transition-all placeholder-[var(--text-ghost)] resize-none scrollbar-hide leading-relaxed"
+                        aria-expanded={slashMenu.open && filteredCommands.length > 0}
+                        aria-haspopup="listbox"
+                        aria-activedescendant={slashMenu.open && filteredCommands[slashMenu.selectedIdx] ? `slash-opt-${filteredCommands[slashMenu.selectedIdx].name}` : undefined}
+                        className="w-full bg-[var(--bg-0)] border border-[var(--bg-4)] rounded-xl py-2.5 pl-9 pr-20 text-[13px] text-[var(--text-primary)] focus:outline-none glow-focus transition-all placeholder-[var(--text-ghost)] resize-none scrollbar-hide leading-relaxed"
                         disabled={status !== 'idle'} />
-                    <button type="submit" disabled={status !== 'idle' || !input.trim()}
-                        className="absolute right-2.5 bottom-1.5 p-2 rounded-lg bg-[#38BDF8] text-[var(--bg-0)] hover:brightness-110 transition-all disabled:opacity-20 disabled:bg-[var(--bg-4)]">
-                        <Send className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="absolute right-2 bottom-1.5 flex items-center gap-1">
+                        <button type="button" onClick={() => fileInputRef.current?.click()}
+                            disabled={status !== 'idle' || attachments.length >= MAX_FILES}
+                            className="p-2 rounded-lg text-[var(--text-ghost)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-3)] transition-all disabled:opacity-30"
+                            title={t.attachFile}>
+                            <Paperclip className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="submit" disabled={status !== 'idle' || (!input.trim() && attachments.length === 0)}
+                            className="p-2 rounded-lg bg-[#38BDF8] text-[var(--bg-0)] hover:brightness-110 transition-all disabled:opacity-20 disabled:bg-[var(--bg-4)]">
+                            <Send className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>

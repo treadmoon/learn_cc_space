@@ -69,7 +69,7 @@ const TOOLS = [
 ];
 
 export async function POST(req: NextRequest) {
-    const { message, history = [], reqId: clientReqId } = await req.json();
+    const { message, history = [], reqId: clientReqId, attachments } = await req.json();
     const reqId = clientReqId || crypto.randomUUID().slice(0, 8);
     const abortCtrl = createAbort(reqId);
 
@@ -103,8 +103,25 @@ export async function POST(req: NextRequest) {
                 // NOTE: `messages` is intentionally declared after toolHandlers.
                 // The `compress` handler captures it via closure and mutates it in-place.
                 const messages = [...history];
-                if (message) {
-                    messages.push({ role: 'user', content: message });
+                if (message || attachments?.length) {
+                    // Build multimodal content if attachments present
+                    if (attachments?.length) {
+                        const parts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+                        if (message) parts.push({ type: 'text', text: message });
+                        for (const att of attachments) {
+                            if (att.type?.startsWith('image/')) {
+                                parts.push({ type: 'image_url', image_url: { url: `data:${att.type};base64,${att.data}` } });
+                            } else if (att.type?.startsWith('text/') || att.name?.match(/\.(md|json|txt|csv|xml|yaml|yml|ts|js|tsx|jsx|py|go|rs|java|c|cpp|h|css|html|sql|sh)$/i)) {
+                                const textContent = Buffer.from(att.data, 'base64').toString('utf8').slice(0, 10000);
+                                parts.push({ type: 'text', text: `\n\n[File: ${att.name}]\n${textContent}` });
+                            } else {
+                                parts.push({ type: 'text', text: `\n\n[Attached: ${att.name} (${att.type}, ${att.size} bytes)]` });
+                            }
+                        }
+                        messages.push({ role: 'user', content: parts });
+                    } else {
+                        messages.push({ role: 'user', content: message });
+                    }
                 }
 
                 sendEvent('state', { status: 'thinking' });

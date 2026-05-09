@@ -5,12 +5,12 @@ import { X } from 'lucide-react';
 import { TRANSLATIONS, type Lang } from '@/components/i18n';
 import { LeftPanel } from '@/components/LeftPanel';
 import { RightPanel } from '@/components/RightPanel';
-import { ChatPanel } from '@/components/ChatPanel';
+import { ChatPanel, type Attachment, type Message } from '@/components/ChatPanel';
 import type { LogEntry } from '@/components/WorkflowView';
 
 export default function Home() {
     const [lang, setLang] = useState<Lang>('zh');
-    const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+    const [messages, setMessages] = useState<Message[]>([]);
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [status, setStatus] = useState<'idle' | 'thinking' | 'executing_tools'>('idle');
     const [globalState, setGlobalState] = useState<{
@@ -37,6 +37,7 @@ export default function Home() {
     const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
     const messagesRef = useRef(messages);
     useEffect(() => { messagesRef.current = messages; }, [messages]);
+    const msgId = () => crypto.randomUUID().slice(0, 8);
 
     const t = TRANSLATIONS[lang];
 
@@ -67,6 +68,7 @@ export default function Home() {
                     setMessages(prev => [
                         ...prev,
                         ...data.bgNotifs.map((n: { task_id: string; status: string; result: string }) => ({
+                            id: msgId(),
                             role: 'assistant',
                             content: `[BACKGROUND TASK: ${n.task_id}] Status: ${n.status}\nOutput:\n${n.result}`
                         }))
@@ -109,8 +111,8 @@ export default function Home() {
         } catch {}
     }, []);
 
-    const handleSend = useCallback(async (inputText: string) => {
-        if (!inputText.trim() || status !== 'idle') return;
+    const handleSend = useCallback(async (inputText: string, fileAttachments: Attachment[] = []) => {
+        if ((!inputText.trim() && fileAttachments.length === 0) || status !== 'idle') return;
 
         // Auto-create session if none exists
         let activeSessionId = currentSessionId;
@@ -125,7 +127,7 @@ export default function Home() {
             } catch {}
         }
 
-        const userMsg = { role: 'user', content: inputText };
+        const userMsg: Message = { id: msgId(), role: 'user', content: inputText, attachments: fileAttachments.length > 0 ? fileAttachments : undefined };
         const prevMessages = [...messages];
         setMessages(prev => [...prev, userMsg]);
         setStatus('thinking');
@@ -135,7 +137,7 @@ export default function Home() {
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: inputText, history: prevMessages })
+                body: JSON.stringify({ message: inputText, history: prevMessages, attachments: fileAttachments.length > 0 ? fileAttachments : undefined })
             });
             if (!res.body) return;
 
@@ -171,7 +173,7 @@ export default function Home() {
                                 }
                                 break;
                             case 'state': setStatus(dataObj.status); break;
-                            case 'message': setMessages(prev => [...prev, { role: 'assistant', content: dataObj.content }]); break;
+                            case 'message': setMessages(prev => [...prev, { id: msgId(), role: 'assistant', content: dataObj.content }]); break;
                             case 'telemetry':
                                 setTelemetry(prev => ({
                                     totalSession: prev.totalSession + (dataObj.total_tokens || 0),
@@ -255,6 +257,21 @@ export default function Home() {
             }
         } catch {}
     }, [sessions, currentSessionId, handleSwitchSession, handleNewSession]);
+
+    const handleClearMessages = useCallback(async () => {
+        setMessages([]);
+        setLogs([]);
+        setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
+        if (currentSessionId) {
+            try {
+                await fetch('/api/sessions', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: currentSessionId, messages: [] }),
+                });
+            } catch {}
+        }
+    }, [currentSessionId]);
 
     const toggleTodo = useCallback(async (idx: number, currentStatus: string) => {
         const nextStatus = currentStatus === 'completed' ? 'pending' : currentStatus === 'pending' ? 'in_progress' : 'completed';
@@ -362,6 +379,9 @@ export default function Home() {
                 onNewSession={handleNewSession}
                 onSwitchSession={handleSwitchSession}
                 onDeleteSession={handleDeleteSession}
+                onClearMessages={handleClearMessages}
+                logs={logs}
+                agentStatus={status}
             />
 
             {/* Right Panel — desktop */}

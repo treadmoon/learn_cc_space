@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Activity, Clock, Terminal, Zap, GitGraph } from 'lucide-react';
+import { Activity, Clock, Terminal, Zap, GitGraph, History } from 'lucide-react';
 import { Section } from './Section';
 import { WorkflowView, type LogEntry } from './WorkflowView';
+import { TimelineView } from './TimelineView';
 import type { T } from './i18n';
 
 interface Props {
@@ -25,7 +26,7 @@ function fmt(n: number): string {
 
 export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, agentStatus, auditLog }: Props) {
     const logRef = useRef<HTMLDivElement>(null);
-    const [tab, setTab] = useState<'flow' | 'logs'>('flow');
+    const [tab, setTab] = useState<'flow' | 'logs' | 'timeline'>('flow');
     useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
 
     return (
@@ -178,12 +179,22 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                             }`}>
                             <Terminal className="w-3 h-3" />{t.tabLogs}
                         </button>
+                        <button onClick={() => setTab('timeline')}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold font-mono uppercase tracking-wider transition-colors ${
+                                tab === 'timeline' ? 'bg-[var(--bg-3)] text-[#38BDF8]' : 'text-[var(--text-ghost)] hover:text-[var(--text-muted)]'
+                            }`}>
+                            <History className="w-3 h-3" />{t.tabTimeline}
+                        </button>
                         {logs.length > 0 && <span className="ml-auto font-mono text-[10px] text-[var(--text-ghost)]">{logs.length}</span>}
                     </div>
 
                     {tab === 'flow' ? (
                         <div className="flex-1 overflow-y-auto scrollbar-hide">
                             <WorkflowView logs={logs} agentStatus={agentStatus} t={t} />
+                        </div>
+                    ) : tab === 'timeline' ? (
+                        <div className="flex-1 overflow-y-auto scrollbar-hide">
+                            <TimelineView logs={logs} auditLog={auditLog || []} t={t} />
                         </div>
                     ) : (
                         <div ref={logRef} className="flex-1 overflow-y-auto p-3 space-y-px font-mono text-[10px] scrollbar-hide">

@@ -90,6 +90,16 @@ body {
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .blink { animation: blink 1.5s ease-in-out infinite; }
 
+@keyframes cardSlideIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes flowPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
 /* Tags */
 .tag { font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
 .tag-sky    { background: rgba(56,189,248,0.15); color: #38BDF8; }
