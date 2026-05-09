@@ -131,7 +131,7 @@ export class TaskManager {
         fs.writeFileSync(p, JSON.stringify(task, null, 2), 'utf8');
     }
 
-    create(subject: string, description: string = '', actor: string = 'agent'): string {
+    create(subject: string, description: string = '', actor: string = 'agent', meta?: Record<string, unknown>): string {
         const task = {
             id: this._nextId(),
             subject,
@@ -142,7 +142,7 @@ export class TaskManager {
             blocks: []
         };
         this._save(task);
-        this._audit('create', task.id, actor, { subject });
+        this._audit('create', task.id, actor, { subject, ...meta });
         return JSON.stringify(task, null, 2);
     }
 
@@ -690,17 +690,20 @@ if (process.env.NODE_ENV !== 'production') {
     globalForAgent.SESSION_MGR = SESSION_MGR;
 }
 
-export function microCompact(messages: any[], targetRecent = 3) {
+export function microCompact(messages: any[], targetRecent = 3): number {
     const PRESERVE_RESULT_TOOLS = new Set(['read_file']);
     const toolResults = messages.filter(m => m.role === 'tool');
-    if (toolResults.length <= targetRecent) return;
+    if (toolResults.length <= targetRecent) return 0;
 
     const toCompress = toolResults.slice(0, -targetRecent);
+    let compressed = 0;
     for (const msg of toCompress) {
         if (typeof msg.content === 'string' && msg.content.length > 100) {
             const toolName = msg.name || 'unknown';
             if (PRESERVE_RESULT_TOOLS.has(toolName)) continue;
             msg.content = `[Previous: used ${toolName}]`;
+            compressed++;
         }
     }
+    return compressed;
 }

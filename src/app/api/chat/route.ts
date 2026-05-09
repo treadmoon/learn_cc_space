@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
                     compress: () => compressMessages(messages),
                     background_run: (kw: any) => BG_MGR.run(kw.command, kw.timeout || 120),
                     check_background: (kw: any) => BG_MGR.check(kw.task_id),
-                    task_create: (kw: any) => TASK_MGR.create(kw.subject, kw.description || ''),
+                    task_create: (kw: any) => TASK_MGR.create(kw.subject, kw.description || '', 'agent', { reqId }),
                     task_get: (kw: any) => TASK_MGR.get(kw.task_id),
                     task_update: (kw: any) => TASK_MGR.update(kw.task_id, kw.status, kw.add_blocked_by, kw.add_blocks),
                     task_list: () => TASK_MGR.listAll(),
@@ -116,13 +116,16 @@ export async function POST(req: NextRequest) {
                         break;
                     }
 
-                    microCompact(messages);
+                    const compacted = microCompact(messages);
+                    if (compacted > 0) {
+                        sendEvent('log', { msg: `[COMPACT] Compressed ${compacted} old tool results to save context`, reqId, compacted });
+                    }
 
                     const notifs = BG_MGR.drain();
                     if (notifs.length) {
                         const txt = notifs.map(n => `[bg:${n.task_id}] ${n.status}: ${n.result}`).join('\n');
                         messages.push({ role: 'user', content: `<background-results>\n${txt}\n</background-results>` });
-                        sendEvent('log', 'Received background notifications');
+                        sendEvent('log', { msg: 'Received background notifications', reqId });
                     }
 
                     const MAX_RETRIES = 3;
@@ -140,7 +143,7 @@ export async function POST(req: NextRequest) {
                             const isRetryable = e.status === 429 || e.status === 500 || e.status === 503 || e.code === 'ECONNRESET';
                             if (!isRetryable || attempt === MAX_RETRIES - 1) throw e;
                             const delay = Math.pow(2, attempt) * 1000;
-                            sendEvent('log', `LLM call failed (${e.status || e.code}), retrying in ${delay}ms...`);
+                            sendEvent('log', { msg: `LLM call failed (${e.status || e.code}), retrying in ${delay}ms...`, reqId });
                             await new Promise(r => setTimeout(r, delay));
                         }
                     }
@@ -159,6 +162,9 @@ export async function POST(req: NextRequest) {
                     }
 
                     if (resp.choices[0].finish_reason !== 'tool_calls') {
+                        if (displayContent) {
+                            sendEvent('log', { msg: `Response: ${displayContent.slice(0, 60)}${displayContent.length > 60 ? '...' : ''}`, reqId, responsePreview: displayContent.slice(0, 200) });
+                        }
                         break;
                     }
 
@@ -174,7 +180,7 @@ export async function POST(req: NextRequest) {
                             } catch (e: any) {
                                 parseError = true;
                                 const output = `Error: Failed to parse tool arguments: ${e.message}. Raw: ${(block.function.arguments || '').slice(0, 200)}`;
-                                sendEvent('log', `[PARSE_ERROR] ${block.function.name}: ${e.message}`);
+                                sendEvent('log', { msg: `[PARSE_ERROR] ${block.function.name}: ${e.message}`, reqId });
                                 messages.push({
                                     role: 'tool',
                                     tool_call_id: block.id,
@@ -184,9 +190,9 @@ export async function POST(req: NextRequest) {
                             }
 
                             if (!parseError) {
-                                sendEvent('log', `Tool: ${block.function.name} ${JSON.stringify(inputArgs).slice(0, 40)}...`);
+                                sendEvent('log', { msg: `Tool: ${block.function.name} ${JSON.stringify(inputArgs).slice(0, 40)}...`, reqId, toolName: block.function.name, toolArgs: inputArgs });
                                 const output = handler(inputArgs);
-                                sendEvent('log', `Result: ${String(output).slice(0, 80)}...`);
+                                sendEvent('log', { msg: `Result: ${String(output).slice(0, 80)}...`, reqId, toolName: block.function.name, toolOutput: String(output).slice(0, 2000) });
 
                                 messages.push({
                                     role: 'tool',

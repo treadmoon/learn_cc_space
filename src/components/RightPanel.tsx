@@ -3,16 +3,16 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Activity, Clock, Terminal, Zap, GitGraph } from 'lucide-react';
 import { Section } from './Section';
-import { WorkflowView } from './WorkflowView';
+import { WorkflowView, type LogEntry } from './WorkflowView';
 import type { T } from './i18n';
 
 interface Props {
     t: T;
-    telemetry: { totalSession: number; lastRequest: number; totalRequests: number };
+    telemetry: { totalSession: number; lastRequest: number; totalRequests: number; lastPrompt: number; lastCompletion: number };
     teammates: Array<{ name: string; role: string; status: string }>;
     bgTasks: Array<{ id: string; command: string; status: string }>;
     cronTasks: Array<{ id: string; command: string; intervalMs: number; lastRun: string | null; count: number }>;
-    logs: string[];
+    logs: LogEntry[];
     agentStatus: string;
     auditLog?: Array<{ ts: string; action: string; taskId: number; actor: string; details: Record<string, unknown> }>;
 }
@@ -39,7 +39,9 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
             <div className="px-4 py-3 bg-[var(--bg-0)] flex items-center justify-around shrink-0">
                 <Metric label={t.sessionRounds} value={String(telemetry.totalRequests)} color="text-[var(--text-primary)]" />
                 <div className="w-px h-8 bg-[var(--bg-3)]" />
-                <Metric label={t.lastReqTokens} value={fmt(telemetry.lastRequest)} color="text-[#38BDF8]" icon={<Zap className="w-3 h-3 inline -mt-0.5 mr-0.5 opacity-60" />} />
+                <Metric label={t.lastReqTokens} value={fmt(telemetry.lastRequest)} color="text-[#38BDF8]"
+                    icon={<Zap className="w-3 h-3 inline -mt-0.5 mr-0.5 opacity-60" />}
+                    sub={telemetry.lastRequest > 0 ? `↑${fmt(telemetry.lastPrompt)} ↓${fmt(telemetry.lastCompletion)}` : undefined} />
                 <div className="w-px h-8 bg-[var(--bg-3)]" />
                 <Metric label={t.totalSessionTokens} value={fmt(telemetry.totalSession)} color="text-[#818CF8]" />
             </div>
@@ -148,6 +150,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                                                 </div>
                                                 <div className="text-[10px] text-[var(--text-ghost)]">
                                                     {entry.actor} · {timeStr}
+                                                    {entry.details?.reqId != null && <span className="ml-1 text-[var(--text-ghost)]/50">#{String(entry.details.reqId).slice(0, 4)}</span>}
                                                 </div>
                                             </div>
                                         </li>
@@ -180,7 +183,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
 
                     {tab === 'flow' ? (
                         <div className="flex-1 overflow-y-auto scrollbar-hide">
-                            <WorkflowView logs={logs} agentStatus={agentStatus} />
+                            <WorkflowView logs={logs} agentStatus={agentStatus} t={t} />
                         </div>
                     ) : (
                         <div ref={logRef} className="flex-1 overflow-y-auto p-3 space-y-px font-mono text-[10px] scrollbar-hide">
@@ -189,7 +192,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                             ) : logs.map((log, i) => (
                                 <div key={i} className="py-0.5 px-2 rounded text-[#38BDF8]/60 hover:text-[#38BDF8] hover:bg-[var(--bg-1)] transition-colors leading-relaxed">
                                     <span className="text-[var(--text-ghost)] mr-2 select-none">{String(i + 1).padStart(3, '0')}</span>
-                                    {log}
+                                    {log.msg}
                                 </div>
                             ))}
                         </div>
@@ -200,11 +203,12 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
     );
 }
 
-function Metric({ label, value, color, icon }: { label: string; value: string; color: string; icon?: React.ReactNode }) {
+function Metric({ label, value, color, icon, sub }: { label: string; value: string; color: string; icon?: React.ReactNode; sub?: string }) {
     return (
-        <div className="flex flex-col items-center gap-1">
+        <div className="flex flex-col items-center gap-0.5">
             <span className="font-mono text-[9px] text-[var(--text-muted)] uppercase tracking-widest">{label}</span>
             <span className={`font-mono text-lg font-bold ${color}`}>{icon}{value}</span>
+            {sub && <span className="font-mono text-[9px] text-[var(--text-ghost)]">{sub}</span>}
         </div>
     );
 }

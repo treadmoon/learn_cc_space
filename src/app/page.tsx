@@ -6,11 +6,12 @@ import { TRANSLATIONS, type Lang } from '@/components/i18n';
 import { LeftPanel } from '@/components/LeftPanel';
 import { RightPanel } from '@/components/RightPanel';
 import { ChatPanel } from '@/components/ChatPanel';
+import type { LogEntry } from '@/components/WorkflowView';
 
 export default function Home() {
     const [lang, setLang] = useState<Lang>('zh');
     const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
-    const [logs, setLogs] = useState<string[]>([]);
+    const [logs, setLogs] = useState<LogEntry[]>([]);
     const [status, setStatus] = useState<'idle' | 'thinking' | 'executing_tools'>('idle');
     const [globalState, setGlobalState] = useState<{
         todos: Array<{ content: string; status: string; activeForm: string }>;
@@ -24,7 +25,7 @@ export default function Home() {
     }>({
         todos: [], tasks: [], teammates: [], worktrees: '', bgTasks: [], cronTasks: [], artifacts: [], auditLog: []
     });
-    const [telemetry, setTelemetry] = useState({ totalSession: 0, lastRequest: 0, totalRequests: 0 });
+    const [telemetry, setTelemetry] = useState({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
     const [taskFilter, setTaskFilter] = useState<{ status?: string; owner?: string; keyword?: string }>({});
 
     // Mobile drawer state
@@ -128,7 +129,7 @@ export default function Home() {
         const prevMessages = [...messages];
         setMessages(prev => [...prev, userMsg]);
         setStatus('thinking');
-        setLogs(prev => [...prev, '> User prompt sent']);
+        setLogs(prev => [...prev, { msg: '> User prompt sent', reqId: 'client', ts: Date.now() }]);
 
         try {
             const res = await fetch('/api/chat', {
@@ -162,14 +163,22 @@ export default function Home() {
                         try { dataObj = JSON.parse(dataMatch[1]); } catch { dataObj = dataMatch[1]; }
 
                         switch (event) {
-                            case 'log': setLogs(prev => [...prev, dataObj]); break;
+                            case 'log':
+                                if (typeof dataObj === 'object' && dataObj.msg) {
+                                    setLogs(prev => [...prev, { msg: dataObj.msg, reqId: dataObj.reqId || 'unknown', ts: Date.now(), toolName: dataObj.toolName, toolArgs: dataObj.toolArgs, toolOutput: dataObj.toolOutput }]);
+                                } else {
+                                    setLogs(prev => [...prev, { msg: String(dataObj), reqId: 'unknown', ts: Date.now() }]);
+                                }
+                                break;
                             case 'state': setStatus(dataObj.status); break;
                             case 'message': setMessages(prev => [...prev, { role: 'assistant', content: dataObj.content }]); break;
                             case 'telemetry':
                                 setTelemetry(prev => ({
                                     totalSession: prev.totalSession + (dataObj.total_tokens || 0),
                                     lastRequest: dataObj.total_tokens || 0,
-                                    totalRequests: prev.totalRequests + 1
+                                    totalRequests: prev.totalRequests + 1,
+                                    lastPrompt: dataObj.prompt_tokens || 0,
+                                    lastCompletion: dataObj.completion_tokens || 0,
                                 }));
                                 break;
                             case 'done':
@@ -186,7 +195,7 @@ export default function Home() {
                                 }
                                 break;
                             case 'error':
-                                setLogs(prev => [...prev, `[ERROR] ${dataObj.message}`]);
+                                setLogs(prev => [...prev, { msg: `[ERROR] ${dataObj.message}`, reqId: 'error', ts: Date.now() }]);
                                 setStatus('idle');
                                 break;
                         }
@@ -195,13 +204,13 @@ export default function Home() {
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            setLogs(prev => [...prev, `[NETWORK_ERROR] ${message}`]);
+            setLogs(prev => [...prev, { msg: `[NETWORK_ERROR] ${message}`, reqId: 'error', ts: Date.now() }]);
             setStatus('idle');
         }
     }, [messages, status, currentSessionId, refreshSessions]);
 
     const handleAbort = useCallback(async () => {
-        setLogs(prev => [...prev, '> Abort signal sent']);
+        setLogs(prev => [...prev, { msg: '> Abort signal sent', reqId: 'client', ts: Date.now() }]);
         try { await fetch('/api/chat/abort', { method: 'POST' }); } catch {}
     }, []);
 
@@ -213,7 +222,7 @@ export default function Home() {
                 setCurrentSessionId(data.data.id);
                 setMessages([]);
                 setLogs([]);
-                setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0 });
+                setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
                 await refreshSessions();
             }
         } catch {}
@@ -227,7 +236,7 @@ export default function Home() {
                 setCurrentSessionId(data.data.id);
                 setMessages(data.data.messages || []);
                 setLogs([]);
-                setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0 });
+                setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
             }
         } catch {}
     }, []);
