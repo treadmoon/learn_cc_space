@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import OpenAI from 'openai';
 import { runBash, runRead, runWrite, runEdit } from '@/lib/agent/tools';
-import { TASK_MGR, TODO, BG_MGR, CRON_MGR, SKILLS, ARTIFACT_MGR, microCompact } from '@/lib/agent/managers';
+import { TASK_MGR, TODO, BG_MGR, CRON_MGR, SKILLS, ARTIFACT_MGR, KNOWLEDGE_MGR, microCompact } from '@/lib/agent/managers';
 
 export const runtime = 'nodejs';
 
@@ -65,7 +65,9 @@ const TOOLS = [
     { type: 'function' as const, function: { name: 'task_list', description: 'List all tasks.', parameters: { type: 'object', properties: {} } } },
     { type: 'function' as const, function: { name: 'cron_schedule', description: 'Schedule a background command to run periodically.', parameters: { type: 'object', properties: { name: { type: 'string' }, command: { type: 'string' }, interval_ms: { type: 'integer' } }, required: ['name', 'command', 'interval_ms'] } } },
     { type: 'function' as const, function: { name: 'cron_remove', description: 'Remove a scheduled background command.', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
-    { type: 'function' as const, function: { name: 'artifact_save', description: 'Save a file as a task artifact to .artifacts/ directory.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path to save as artifact' }, task_id: { type: 'integer', description: 'Associated task ID (optional, saves to shared/ if omitted)' }, description: { type: 'string', description: 'Brief description of the artifact' } }, required: ['path'] } } }
+    { type: 'function' as const, function: { name: 'artifact_save', description: 'Save a file as a task artifact to .artifacts/ directory.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path to save as artifact' }, task_id: { type: 'integer', description: 'Associated task ID (optional, saves to shared/ if omitted)' }, description: { type: 'string', description: 'Brief description of the artifact' } }, required: ['path'] } } },
+    { type: 'function' as const, function: { name: 'knowledge_ingest', description: 'Ingest a file or text into the knowledge base for later retrieval. Supports .md, .txt, .json, .csv, .py, .ts, .js and other text formats.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path to ingest' }, text: { type: 'string', description: 'Direct text content to ingest (alternative to path)' }, source: { type: 'string', description: 'Source identifier for text mode (required when using text)' } } } } },
+    { type: 'function' as const, function: { name: 'knowledge_search', description: 'Semantic search over the knowledge base. Use this to find relevant information before answering questions.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, top_k: { type: 'number', description: 'Number of results to return (default 5)' } }, required: ['query'] } } }
 ];
 
 export async function POST(req: NextRequest) {
@@ -97,7 +99,13 @@ export async function POST(req: NextRequest) {
                     task_list: () => TASK_MGR.listAll(),
                     cron_schedule: (kw: any) => CRON_MGR.schedule(kw.name, kw.command, kw.interval_ms),
                     cron_remove: (kw: any) => CRON_MGR.remove(kw.name),
-                    artifact_save: (kw: any) => ARTIFACT_MGR.save(kw.path, kw.task_id, kw.description)
+                    artifact_save: (kw: any) => ARTIFACT_MGR.save(kw.path, kw.task_id, kw.description),
+                    knowledge_ingest: async (kw: any) => {
+                        if (kw.path) return await KNOWLEDGE_MGR.ingest(kw.path);
+                        if (kw.text) return await KNOWLEDGE_MGR.ingestText(kw.text, kw.source || 'inline');
+                        return 'Error: Provide either path or text';
+                    },
+                    knowledge_search: async (kw: any) => await KNOWLEDGE_MGR.search(kw.query, kw.top_k)
                 };
 
                 // NOTE: `messages` is intentionally declared after toolHandlers.
@@ -208,7 +216,7 @@ export async function POST(req: NextRequest) {
 
                             if (!parseError) {
                                 sendEvent('log', { msg: `Tool: ${block.function.name} ${JSON.stringify(inputArgs).slice(0, 40)}...`, reqId, toolName: block.function.name, toolArgs: inputArgs });
-                                const output = handler(inputArgs);
+                                const output = await handler(inputArgs);
                                 sendEvent('log', { msg: `Result: ${String(output).slice(0, 80)}...`, reqId, toolName: block.function.name, toolOutput: String(output).slice(0, 2000) });
 
                                 messages.push({

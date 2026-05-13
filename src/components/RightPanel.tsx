@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Activity, Clock, Terminal, Zap, GitGraph, History } from 'lucide-react';
+import { Activity, Clock, Terminal, Zap, GitGraph, History, BookOpen } from 'lucide-react';
 import { Section } from './Section';
 import { WorkflowView, type LogEntry } from './WorkflowView';
 import { TimelineView } from './TimelineView';
@@ -16,6 +16,7 @@ interface Props {
     logs: LogEntry[];
     agentStatus: string;
     auditLog?: Array<{ ts: string; action: string; taskId: number; actor: string; details: Record<string, unknown> }>;
+    knowledge?: { docCount: number; chunkCount: number; sources: Array<{ source: string; chunkCount: number; ingestedAt: string }> };
 }
 
 function fmt(n: number): string {
@@ -24,7 +25,7 @@ function fmt(n: number): string {
     return String(n);
 }
 
-export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, agentStatus, auditLog }: Props) {
+export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, agentStatus, auditLog, knowledge }: Props) {
     const logRef = useRef<HTMLDivElement>(null);
     const [tab, setTab] = useState<'flow' | 'logs' | 'timeline'>('flow');
     useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
@@ -158,6 +159,33 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                                     );
                                 })}
                             </ul>
+                        )}
+                    </Section>
+
+                    <div className="divider" />
+
+                    <Section title={t.knowledgeStats} titleClass="sh sh-amber"
+                        icon={<BookOpen className="w-3.5 h-3.5 text-[#FBBF24]" />}
+                        count={knowledge && knowledge.docCount > 0 ? <span className="tag tag-amber">{knowledge.docCount}</span> : undefined}
+                        defaultOpen={false}>
+                        {!knowledge || knowledge.docCount === 0 ? (
+                            <p className="text-[12px] text-[var(--text-ghost)] italic">{t.knowledgeEmpty}</p>
+                        ) : (
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-3 text-[11px]">
+                                    <span className="text-[var(--text-ghost)]">{t.knowledgeDocCount}: <span className="text-[var(--text-primary)] font-mono font-semibold">{knowledge.docCount}</span></span>
+                                    <span className="text-[var(--text-ghost)]">{t.knowledgeChunkCount}: <span className="text-[var(--text-primary)] font-mono font-semibold">{knowledge.chunkCount}</span></span>
+                                </div>
+                                <ul className="space-y-1">
+                                    {knowledge.sources.map((s, idx) => (
+                                        <li key={idx} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--bg-3)] transition-colors">
+                                            <BookOpen className="w-3 h-3 text-[#FBBF24]/60 shrink-0" />
+                                            <span className="text-[10px] font-mono text-[var(--text-secondary)] truncate flex-1">{s.source}</span>
+                                            <span className="text-[9px] font-mono text-[var(--text-ghost)]">{s.chunkCount}c</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
                         )}
                     </Section>
                 </div>

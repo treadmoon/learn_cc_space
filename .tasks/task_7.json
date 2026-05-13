@@ -1,0 +1,9 @@
+{
+  "id": 7,
+  "subject": "创建 src/tools/__init__.py",
+  "description": "创建 src/tools/__init__.py 导出这些模块",
+  "status": "completed",
+  "owner": null,
+  "blockedBy": [],
+  "blocks": []
+}

@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
     "@tailwindcss/typography": "^0.5.19",
+    "@xyflow/react": "^12.10.2",
     "lucide-react": "^1.8.0",
     "next": "16.2.4",
     "openai": "^6.34.0",

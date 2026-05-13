@@ -5,7 +5,7 @@ import { Send, Loader2, Globe, Square, PanelLeftOpen, PanelRightOpen, Terminal, 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { T, Lang } from './i18n';
-import { FlowOverlay } from './FlowOverlay';
+import { FlowGraph } from './FlowGraph';
 import type { LogEntry } from './WorkflowView';
 
 export interface Attachment {
@@ -180,7 +180,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
     };
 
     return (
-        <div className="flex-1 flex flex-col panel-main rounded-2xl overflow-hidden">
+        <div className="flex-1 flex flex-col panel-main rounded-2xl overflow-hidden relative">
             <div className="h-12 topbar-main flex items-center px-4 md:px-5 gap-2.5 shrink-0">
                 {onToggleLeft && (
                     <button onClick={onToggleLeft} className="md:hidden p-1.5 rounded-lg hover:bg-[var(--bg-4)] text-[var(--text-muted)] transition-colors">
@@ -239,9 +239,9 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                 </div>
             </div>
 
-            {/* Flow Overlay — floats at top of chat area */}
+            {/* Flow Graph — absolute positioned flowchart overlay */}
             {logs && agentStatus && !flowDismissed && (
-                <FlowOverlay logs={logs} agentStatus={agentStatus} t={t} onDismiss={() => setFlowDismissed(true)} />
+                <FlowGraph logs={logs} agentStatus={agentStatus} t={t} onDismiss={() => setFlowDismissed(true)} />
             )}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 scrollbar-hide flex flex-col">

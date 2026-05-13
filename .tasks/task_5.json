@@ -1,0 +1,9 @@
+{
+  "id": 5,
+  "subject": "创建 src/tools/string_utils.py",
+  "description": "创建 src/tools/string_utils.py，包含 3 个字符串处理函数（reverse、capitalize_words、count_vowels）",
+  "status": "completed",
+  "owner": null,
+  "blockedBy": [],
+  "blocks": []
+}

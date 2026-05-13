@@ -100,6 +100,11 @@ body {
   50% { opacity: 1; }
 }
 
+@keyframes connectorTravel {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
 /* Tags */
 .tag { font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
 .tag-sky    { background: rgba(56,189,248,0.15); color: #38BDF8; }
@@ -108,3 +113,50 @@ body {
 .tag-amber  { background: rgba(251,191,36,0.15); color: #FBBF24; }
 .tag-red    { background: rgba(248,113,113,0.15); color: #F87171; }
 .tag-gray   { background: rgba(100,116,139,0.20); color: #94A3B8; }
+
+/* ── React Flow dark theme overrides ── */
+.react-flow__background {
+  background: var(--bg-1) !important;
+}
+.react-flow__controls {
+  border-radius: 10px !important;
+  overflow: hidden !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+}
+.react-flow__controls button {
+  background: var(--bg-3) !important;
+  color: var(--text-secondary) !important;
+  border-color: var(--bg-4) !important;
+  fill: var(--text-secondary) !important;
+}
+.react-flow__controls button:hover {
+  background: var(--bg-4) !important;
+  fill: var(--text-primary) !important;
+}
+.react-flow__controls button svg {
+  fill: inherit !important;
+}
+.react-flow__minimap {
+  background: var(--bg-2) !important;
+  border: 1px solid var(--bg-4) !important;
+  border-radius: 10px !important;
+}
+.react-flow__edge-path {
+  stroke-width: 2 !important;
+}
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 6 3 !important;
+  animation: edgeFlow 1s linear infinite !important;
+}
+@keyframes edgeFlow {
+  to { stroke-dashoffset: -9; }
+}
+.react-flow__handle {
+  width: 6px !important;
+  height: 6px !important;
+  background: var(--bg-4) !important;
+  border: none !important;
+}
+.react-flow__attribution {
+  display: none !important;
+}

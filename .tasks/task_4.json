@@ -1,0 +1,9 @@
+{
+  "id": 4,
+  "subject": "构建 Python 工具库",
+  "description": "创建一个包含字符串处理和数学工具函数的Python工具库，包含单元测试并运行测试",
+  "status": "pending",
+  "owner": null,
+  "blockedBy": [],
+  "blocks": []
+}

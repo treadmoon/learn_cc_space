@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
-import { TASK_MGR, TODO, TEAM_MGR, WORKTREE_MGR, BG_MGR, CRON_MGR, ARTIFACT_MGR, type TaskFilter } from '@/lib/agent/managers';
+import { TASK_MGR, TODO, TEAM_MGR, WORKTREE_MGR, BG_MGR, CRON_MGR, ARTIFACT_MGR, KNOWLEDGE_MGR, type TaskFilter } from '@/lib/agent/managers';
 
 export const runtime = 'nodejs';
 
@@ -34,7 +34,8 @@ export async function GET(req: NextRequest) {
         artifacts: ARTIFACT_MGR.list(),
         bgTasks: BG_MGR.listActive(),
         cronTasks: CRON_MGR.listActive(),
-        auditLog: TASK_MGR.getAuditLog(undefined, 20)
+        auditLog: TASK_MGR.getAuditLog(undefined, 20),
+        knowledge: KNOWLEDGE_MGR.getStats(),
     };
 
     // ETag based on stable state only (excludes one-shot notifications)

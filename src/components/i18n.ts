@@ -95,6 +95,10 @@ export const TRANSLATIONS = {
         flowError: "出错",
         flowAnalyzing: "Agent 正在分析输入...",
         flowCurrentStep: "当前步骤",
+        knowledgeStats: "知识库",
+        knowledgeDocCount: "已索引文档",
+        knowledgeChunkCount: "分块数量",
+        knowledgeEmpty: "知识库为空",
     },
     en: {
         localOps: "LOCAL OPERATIONS",
@@ -192,6 +196,10 @@ export const TRANSLATIONS = {
         flowError: "Error",
         flowAnalyzing: "Agent is analyzing...",
         flowCurrentStep: "Current",
+        knowledgeStats: "Knowledge Base",
+        knowledgeDocCount: "Indexed Docs",
+        knowledgeChunkCount: "Chunks",
+        knowledgeEmpty: "Knowledge base is empty",
     }
 } as const;
 

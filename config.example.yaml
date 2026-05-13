@@ -1,0 +1,17 @@
+# Example datapipe configuration
+
+pipeline:
+  - type: filter_rows
+    params:
+      condition: "age > 18"
+  
+  - type: rename_columns
+    params:
+      column_mapping:
+        first_name: fname
+        last_name: lname
+  
+  - type: add_computed_column
+    params:
+      new_column_name: "full_name"
+      expression: "fname + ' ' + lname"

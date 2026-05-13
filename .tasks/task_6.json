@@ -1,0 +1,9 @@
+{
+  "id": 6,
+  "subject": "创建 src/tools/math_utils.py",
+  "description": "创建 src/tools/math_utils.py，包含 3 个数学工具函数（factorial、is_prime、fibonacci）",
+  "status": "completed",
+  "owner": null,
+  "blockedBy": [],
+  "blocks": []
+}

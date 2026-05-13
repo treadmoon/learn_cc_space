@@ -22,8 +22,10 @@ export default function Home() {
         cronTasks: Array<{ id: string; command: string; intervalMs: number; lastRun: string | null; count: number }>;
         artifacts: Array<{ taskId: number | null; files: Array<{ name: string; createdAt: string; size: number; description: string }> }>;
         auditLog: Array<{ ts: string; action: string; taskId: number; actor: string; details: Record<string, unknown> }>;
+        knowledge: { docCount: number; chunkCount: number; sources: Array<{ source: string; chunkCount: number; ingestedAt: string }> };
     }>({
-        todos: [], tasks: [], teammates: [], worktrees: '', bgTasks: [], cronTasks: [], artifacts: [], auditLog: []
+        todos: [], tasks: [], teammates: [], worktrees: '', bgTasks: [], cronTasks: [], artifacts: [], auditLog: [],
+        knowledge: { docCount: 0, chunkCount: 0, sources: [] }
     });
     const [telemetry, setTelemetry] = useState({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
     const [taskFilter, setTaskFilter] = useState<{ status?: string; owner?: string; keyword?: string }>({});
@@ -38,6 +40,14 @@ export default function Home() {
     const messagesRef = useRef(messages);
     useEffect(() => { messagesRef.current = messages; }, [messages]);
     const msgId = () => crypto.randomUUID().slice(0, 8);
+    // Sync ref immediately after setMessages (useEffect is async, too slow for streaming loop)
+    const addMessage = useCallback((msg: Message) => {
+        setMessages(prev => {
+            const next = [...prev, msg];
+            messagesRef.current = next;
+            return next;
+        });
+    }, []);
 
     const t = TRANSLATIONS[lang];
 
@@ -62,7 +72,8 @@ export default function Home() {
                     todos: data.todos || [], tasks: data.tasks || [],
                     teammates: data.teammates || [], worktrees: data.worktrees || '',
                     bgTasks: data.bgTasks || [], cronTasks: data.cronTasks || [],
-                    artifacts: data.artifacts || [], auditLog: data.auditLog || []
+                    artifacts: data.artifacts || [], auditLog: data.auditLog || [],
+                    knowledge: data.knowledge || { docCount: 0, chunkCount: 0, sources: [] }
                 });
                 if (data.bgNotifs?.length) {
                     setMessages(prev => [
@@ -129,7 +140,7 @@ export default function Home() {
 
         const userMsg: Message = { id: msgId(), role: 'user', content: inputText, attachments: fileAttachments.length > 0 ? fileAttachments : undefined };
         const prevMessages = [...messages];
-        setMessages(prev => [...prev, userMsg]);
+        addMessage(userMsg);
         setStatus('thinking');
         setLogs(prev => [...prev, { msg: '> User prompt sent', reqId: 'client', ts: Date.now() }]);
 
@@ -173,7 +184,7 @@ export default function Home() {
                                 }
                                 break;
                             case 'state': setStatus(dataObj.status); break;
-                            case 'message': setMessages(prev => [...prev, { id: msgId(), role: 'assistant', content: dataObj.content }]); break;
+                            case 'message': addMessage({ id: msgId(), role: 'assistant', content: dataObj.content }); break;
                             case 'telemetry':
                                 setTelemetry(prev => ({
                                     totalSession: prev.totalSession + (dataObj.total_tokens || 0),
@@ -386,7 +397,7 @@ export default function Home() {
 
             {/* Right Panel — desktop */}
             <div className="hidden lg:flex flex-col w-72 xl:w-80 panel-side rounded-2xl overflow-hidden shrink-0">
-                <RightPanel t={t} telemetry={telemetry} teammates={globalState.teammates} bgTasks={globalState.bgTasks} cronTasks={globalState.cronTasks} logs={logs} agentStatus={status} auditLog={globalState.auditLog} />
+                <RightPanel t={t} telemetry={telemetry} teammates={globalState.teammates} bgTasks={globalState.bgTasks} cronTasks={globalState.cronTasks} logs={logs} agentStatus={status} auditLog={globalState.auditLog} knowledge={globalState.knowledge} />
             </div>
 
             {/* Mobile drawer — right */}
@@ -397,7 +408,7 @@ export default function Home() {
                         <button onClick={() => setRightOpen(false)} className="absolute top-3 right-3 p-1 rounded-lg hover:bg-white/10 text-gray-400 z-10">
                             <X className="w-4 h-4" />
                         </button>
-                        <RightPanel t={t} telemetry={telemetry} teammates={globalState.teammates} bgTasks={globalState.bgTasks} cronTasks={globalState.cronTasks} logs={logs} agentStatus={status} auditLog={globalState.auditLog} />
+                        <RightPanel t={t} telemetry={telemetry} teammates={globalState.teammates} bgTasks={globalState.bgTasks} cronTasks={globalState.cronTasks} logs={logs} agentStatus={status} auditLog={globalState.auditLog} knowledge={globalState.knowledge} />
                     </div>
                 </div>
             )}

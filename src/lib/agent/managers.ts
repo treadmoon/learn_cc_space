@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { exec, execSync } from 'node:child_process';
 import { mkdirSync } from './tools';
+import { KnowledgeManager } from './knowledge';
 
 const WORKDIR = process.cwd();
 const TODOS_FILE = path.join(WORKDIR, '.todos.json');
@@ -664,6 +665,7 @@ const globalForAgent = global as unknown as {
     WORKTREE_MGR: WorktreeManager;
     ARTIFACT_MGR: ArtifactManager;
     SESSION_MGR: SessionManager;
+    KNOWLEDGE_MGR: KnowledgeManager;
 };
 
 export const TODO = globalForAgent.TODO || new TodoManager();
@@ -676,6 +678,7 @@ export const TEAM_MGR = globalForAgent.TEAM_MGR || new TeammateManager();
 export const WORKTREE_MGR = globalForAgent.WORKTREE_MGR || new WorktreeManager();
 export const ARTIFACT_MGR = globalForAgent.ARTIFACT_MGR || new ArtifactManager();
 export const SESSION_MGR = globalForAgent.SESSION_MGR || new SessionManager();
+export const KNOWLEDGE_MGR = globalForAgent.KNOWLEDGE_MGR || new KnowledgeManager();
 
 if (process.env.NODE_ENV !== 'production') {
     globalForAgent.TODO = TODO;
@@ -688,6 +691,7 @@ if (process.env.NODE_ENV !== 'production') {
     globalForAgent.WORKTREE_MGR = WORKTREE_MGR;
     globalForAgent.ARTIFACT_MGR = ARTIFACT_MGR;
     globalForAgent.SESSION_MGR = SESSION_MGR;
+    globalForAgent.KNOWLEDGE_MGR = KNOWLEDGE_MGR;
 }
 
 export function microCompact(messages: any[], targetRecent = 3): number {
