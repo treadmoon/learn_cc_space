@@ -38,6 +38,11 @@ export class TodoManager {
         fs.writeFileSync(TODOS_FILE, JSON.stringify(this.items, null, 2), 'utf8');
     }
 
+    /**
+     * 更新待办列表 — 全量替换
+     * 规则: 最多 20 项, 最多 1 个 in_progress, 每项必须有 content 和 activeForm
+     * 存储: .todos.json (原子写入)
+     */
     update(items: any[]): string {
         const validated: TodoItem[] = [];
         let inProgressCount = 0;
@@ -132,6 +137,11 @@ export class TaskManager {
         fs.writeFileSync(p, JSON.stringify(task, null, 2), 'utf8');
     }
 
+    /**
+     * 创建持久化任务
+     * 存储: .tasks/task_{id}.json (自增 ID)
+     * 附带: 写入审计日志 .tasks/audit.jsonl
+     */
     create(subject: string, description: string = '', actor: string = 'agent', meta?: Record<string, unknown>): string {
         const task = {
             id: this._nextId(),
@@ -151,6 +161,13 @@ export class TaskManager {
         return JSON.stringify(this._load(tid), null, 2);
     }
 
+    /**
+     * 更新任务状态或依赖关系
+     * 特殊逻辑:
+     *   - 设为 completed 时, 自动从其他任务的 blockedBy 中移除本任务 (解锁下游)
+     *   - 设为 deleted 时, 删除文件并记录审计日志
+     *   - addBlockedBy/addBlocks 与现有值合并去重
+     */
     update(tid: string | number, status: string | null = null, addBlockedBy: number[] | null = null, addBlocks: number[] | null = null, actor: string = 'agent'): string {
         const task = this._load(tid);
         if (status) {
@@ -196,6 +213,10 @@ export class TaskManager {
         return lines.join('\n');
     }
 
+    /**
+     * 列出所有任务 (结构化) — 供 /api/state 返回给前端
+     * 支持按 status / owner / keyword 过滤
+     */
     listAllStructured(filter?: TaskFilter): Array<{ id: number; subject: string; description: string; status: string; owner: string | null; blockedBy: number[]; blocks: number[] }> {
         const files = fs.readdirSync(TASKS_DIR).filter(f => f.startsWith('task_') && f.endsWith('.json')).sort();
         let tasks = files.map(file => {
@@ -243,6 +264,12 @@ export class BackgroundManager {
         this.notifications = [];
     }
 
+    /**
+     * 后台执行 shell 命令 — 非阻塞, 通过 child_process.exec 异步运行
+     * 流程: 并发检查 → 生成 8 位 UUID → 启动子进程 → 完成后推送通知
+     * 状态: running → completed / error / timeout
+     * 通知: 完成后 push 到 notifications 队列, 等待 drain() 消费
+     */
     run(command: string, timeout: number = 120): string {
         const running = Object.values(this.tasks).filter(t => t.status === 'running').length;
         if (running >= this.maxConcurrent) {
@@ -285,6 +312,12 @@ export class BackgroundManager {
         return lines || 'No bg tasks.';
     }
 
+    /**
+     * 消费通知队列 — 一次性取出所有待处理通知后清空
+     * 两个消费者:
+     *   1. Agent 循环 (route.ts:L149) — 注入为 <background-results> 合成消息
+     *   2. State API (state/route.ts:L46) — 作为 bgNotifs 返回给前端
+     */
     drain(): any[] {
         const notifs = [...this.notifications];
         this.notifications = [];
@@ -305,6 +338,11 @@ export class CronManager {
         this.tasks = {};
     }
 
+    /**
+     * 创建定时任务 — setInterval 定期触发
+     * 内部委托 BG_MGR.run() 执行, 结果走同一套 drain 通知管道
+     * 若同名任务已存在, 先清除旧 timer 再创建新的
+     */
     schedule(name: string, command: string, intervalMs: number): string {
         if (this.tasks[name] && this.tasks[name].timer) {
             clearInterval(this.tasks[name].timer!);
@@ -406,6 +444,11 @@ export class MessageBus {
         mkdirSync(INBOX_DIR);
     }
     
+    /**
+     * 读取指定成员的收件箱 — 破坏性读取 (读后清空)
+     * 存储: .team/inbox/{name}.jsonl (每行一个 JSON 消息)
+     * 语义: fire-and-forget, 消息被读取后即丢失
+     */
     readInbox(name: string): any[] {
         const inboxPath = path.join(INBOX_DIR, `${name}.jsonl`);
         if (!fs.existsSync(inboxPath)) return [];
@@ -450,6 +493,11 @@ export class TeammateManager {
         return config.members || [];
     }
     
+    /**
+     * 派生/唤醒子 Agent — 注册成员并设为 working 状态
+     * 若成员已存在则更新 role 并唤醒, 否则新建
+     * 存储: .team/config.json
+     */
     spawn(name: string, role: string) {
         const config = this._load();
         let member = config.members.find((m: any) => m.name === name);
@@ -463,6 +511,10 @@ export class TeammateManager {
         return `Spawned/woke '${name}' (role: ${role})`;
     }
     
+    /**
+     * 更新子 Agent 状态 — 如 'working' → 'idle'
+     * 静默失败: 成员不存在时不报错
+     */
     setStatus(name: string, status: string) {
         const config = this._load();
         const member = config.members.find((m: any) => m.name === name);
@@ -694,6 +746,12 @@ if (process.env.NODE_ENV !== 'production') {
     globalForAgent.KNOWLEDGE_MGR = KNOWLEDGE_MGR;
 }
 
+/**
+ * 上下文微压缩 — 每轮 Agent 循环开始时执行
+ * 策略: 保留最近 targetRecent 条工具结果, 旧结果替换为 [Previous: used {toolName}]
+ * 特殊: read_file 结果永不压缩 (后续步骤可能依赖)
+ * @returns 实际压缩的消息数
+ */
 export function microCompact(messages: any[], targetRecent = 3): number {
     const PRESERVE_RESULT_TOOLS = new Set(['read_file']);
     const toolResults = messages.filter(m => m.role === 'tool');

@@ -26,6 +26,10 @@ export function triggerAbort(reqId?: string) {
     }
 }
 
+/**
+ * 压缩对话上下文 — 移除旧消息, 保留最近 KEEP_RECENT 条
+ * 被 Agent 通过 compress 工具主动调用, 或在上下文接近窗口限制时触发
+ */
 function compressMessages(msgs: any[]): string {
     const KEEP_RECENT = 4;
     if (msgs.length <= KEEP_RECENT + 1) return 'Context is already small, no compression needed.';
@@ -78,6 +82,10 @@ export async function POST(req: NextRequest) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
         async start(controller) {
+            /**
+             * SSE 事件发送器 — 将事件编码为 `event: {name}\ndata: {json}\n\n` 格式推入流
+             * 事件类型: state | log | message | telemetry | done | error
+             */
             function sendEvent(event: string, data: any) {
                 controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
             }
@@ -134,6 +142,8 @@ export async function POST(req: NextRequest) {
 
                 sendEvent('state', { status: 'thinking' });
 
+                // ── Agent 主循环 (最多 15 轮) ──
+                // 每轮: microCompact → drain 通知 → LLM 调用 → 执行工具 → 继续/退出
                 for (let loop = 0; loop < 15; loop++) {
                     // Check abort signal
                     if (abortCtrl.signal.aborted) {
@@ -195,6 +205,8 @@ export async function POST(req: NextRequest) {
 
                     sendEvent('state', { status: 'executing_tools' });
 
+                    // ── 工具执行循环 ──
+                    // 遍历 LLM 返回的 tool_calls, 分派到对应 handler 执行
                     for (const block of assistantMsg.tool_calls || []) {
                         if (block.type === 'function') {
                             const handler = toolHandlers[block.function.name] || (() => 'Unknown tool');

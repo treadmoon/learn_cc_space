@@ -28,13 +28,17 @@ Agent 首先检索知识库，了解当前项目的 SSE 实现模式。
 │  → 调用 knowledge_search                                    │
 │    { query: "SSE streaming real-time polling mechanism" }    │
 └─────────────────────────────────────────────────────────────┘
-         │
-         ▼
+  │  src/app/api/chat/route.ts:L70   TOOLS[6] 定义
+  │  src/app/api/chat/route.ts:L108  toolHandlers.knowledge_search
+  │    → KNOWLEDGE_MGR.search(query, top_k)
+  ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  KnowledgeManager.search("SSE streaming ...", 5)            │
+│  src/lib/agent/knowledge.ts:L245  search() 方法             │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │ Step 1: Embed Query                                 │    │
+│  │   knowledge.ts:L249-L255  _embed() 调用             │    │
 │  │                                                     │    │
 │  │   _embed(["SSE streaming real-time polling ..."])   │    │
 │  │     │                                               │    │
@@ -49,6 +53,7 @@ Agent 首先检索知识库，了解当前项目的 SSE 实现模式。
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │ Step 2: 向量余弦相似度 (语义匹配)                    │    │
+│  │   knowledge.ts:L258  cosineSim() × N 次             │    │
 │  │                                                     │    │
 │  │   遍历全部 chunks (假设 N=50 个分块):                │    │
 │  │                                                     │    │
@@ -69,6 +74,9 @@ Agent 首先检索知识库，了解当前项目的 SSE 实现模式。
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │ Step 3: BM25 关键词评分 (精确匹配)                   │    │
+│  │   knowledge.ts:L262    bm25Score() 调用              │    │
+│  │   knowledge.ts:L82     tokenize() 分词               │    │
+│  │   knowledge.ts:L86     bm25Score() BM25 公式         │    │
 │  │                                                     │    │
 │  │   3a. tokenize(query)                               │    │
 │  │       "SSE streaming real-time polling mechanism"   │    │
@@ -92,6 +100,7 @@ Agent 首先检索知识库，了解当前项目的 SSE 实现模式。
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │ Step 4: 归一化 + 分数融合                            │    │
+│  │   knowledge.ts:L265-L270  归一化 + 加权融合          │    │
 │  │                                                     │    │
 │  │   4a. 归一化到 [0, 1]:                              │    │
 │  │       maxVec = max(vectorScores) = 0.94             │    │
@@ -112,6 +121,8 @@ Agent 首先检索知识库，了解当前项目的 SSE 实现模式。
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │ Step 5: 排序取 Top-K + 格式化输出                    │    │
+│  │   knowledge.ts:L273-L274  sort + slice               │    │
+│  │   knowledge.ts:L281-L289  format 输出                │    │
 │  │                                                     │    │
 │  │   5a. 按 combined score 降序排序                     │    │
 │  │       [(idx:0, 1.000), (idx:2, 0.916), ...]        │    │
@@ -164,6 +175,11 @@ Agent 首先检索知识库，了解当前项目的 SSE 实现模式。
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 task_create × 5                                        │
 └─────────────────────────────────────────────────────────────┘
+  src/app/api/chat/route.ts:L63    TOOLS[10] task_create 定义
+  src/app/api/chat/route.ts:L97    toolHandlers.task_create
+    → TASK_MGR.create(subject, description)
+  src/lib/agent/managers.ts:L135   TaskManager.create() 方法
+```
 
 任务 #1: WebSocket 服务端实现
 ├── subject: "实现 WebSocket 服务端"
@@ -226,6 +242,10 @@ Agent 首先检索知识库，了解当前项目的 SSE 实现模式。
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 TodoWrite                                              │
+│  src/app/api/chat/route.ts:L57   TOOLS[4] TodoWrite 定义     │
+│  src/app/api/chat/route.ts:L91   toolHandlers.TodoWrite       │
+│    → TODO.update(items)                                       │
+│  src/lib/agent/managers.ts:L80   TodoManager.update() 方法    │
 │  { todos: [                                                  │
 │    { id: 1, content: "WebSocket 功能实现", status: "in_progress" },│
 │    { id: 2, content: "参考 SSE 模式设计 WS 协议", status: "pending" }│
@@ -244,6 +264,10 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 bash (读取现有 SSE 代码供子 Agent 参考)                  │
+│  src/app/api/chat/route.ts:L53   TOOLS[0] bash 定义          │
+│  src/app/api/chat/route.ts:L87   toolHandlers.bash            │
+│    → runBash(command)                                         │
+│  src/lib/agent/tools.ts:L?       runBash() → child_process   │
 │  $ cat src/app/api/chat/route.ts | head -50                  │
 │                                                             │
 │  输出: SSE 路由结构、sendEvent 函数、Agent 循环...             │
@@ -252,6 +276,8 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  TeammateManager.spawn("ws-engineer", "WebSocket 服务端开发") │
+│  src/lib/agent/managers.ts:L453  TeammateManager.spawn()     │
+│    → 读取 .team/config.json → push/update member → 写回      │
 │                                                             │
 │  .team/config.json 更新:                                     │
 │  {                                                           │
@@ -266,6 +292,7 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  TeammateManager.spawn("tester", "测试工程师")                │
+│  src/lib/agent/managers.ts:L453  TeammateManager.spawn()     │
 │                                                             │
 │  .team/config.json 更新:                                     │
 │  {                                                           │
@@ -290,14 +317,20 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
 └─────────────────────────────────────────────────────────────┘
          │
          ├── 调用 read_file
+         │   src/app/api/chat/route.ts:L88  toolHandlers.read_file
+         │     → runRead(path)
          │   读取 src/app/api/chat/route.ts
          │   了解 SSE sendEvent 模式
          │
          ├── 调用 knowledge_search
+         │   src/app/api/chat/route.ts:L108 toolHandlers.knowledge_search
+         │     → KNOWLEDGE_MGR.search()
          │   { query: "WebSocket ws library Node.js setup" }
          │   → 返回 ws 库 API 文档片段
          │
          ├── 调用 write_file
+         │   src/app/api/chat/route.ts:L89  toolHandlers.write_file
+         │     → runWrite(path, content)
          │   创建 src/app/api/ws/route.ts
          │   ┌─────────────────────────────────────────────┐
          │   │ import { WebSocketServer } from 'ws';       │
@@ -312,14 +345,18 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          │   └─────────────────────────────────────────────┘
          │
          ├── 调用 bash
+         │   src/app/api/chat/route.ts:L87  toolHandlers.bash → runBash()
          │   $ pnpm add ws
          │   → 安装 ws 依赖
          │
          ├── 调用 write_file
+         │   src/app/api/chat/route.ts:L89  toolHandlers.write_file → runWrite()
          │   创建 src/lib/ws-broadcaster.ts
          │   (独立的广播器模块，供 state 变更时调用)
          │
          └── 写入结果到收件箱
+             src/lib/agent/managers.ts:L409  MessageBus.readInbox()
+               (子 Agent 外部进程直接写入 JSONL 文件)
              .team/inbox/ws-engineer.jsonl
              ┌─────────────────────────────────────────────┐
              │ {"from":"ws-engineer","to":"lead",           │
@@ -333,6 +370,7 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  TeammateManager.setStatus("ws-engineer", "idle")           │
+│  src/lib/agent/managers.ts:L466  TeammateManager.setStatus() │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -346,13 +384,16 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
 └─────────────────────────────────────────────────────────────┘
          │
          ├── 调用 read_file
+         │   src/app/api/chat/route.ts:L88  toolHandlers.read_file → runRead()
          │   读取已有测试模式: tests/ 或 __tests__/ 目录
          │
          ├── 调用 bash
+         │   src/app/api/chat/route.ts:L87  toolHandlers.bash → runBash()
          │   $ ls src/**/*.test.ts 2>/dev/null || echo "no tests"
          │   → 了解项目测试结构
          │
          ├── 调用 write_file
+         │   src/app/api/chat/route.ts:L89  toolHandlers.write_file → runWrite()
          │   创建 src/lib/__tests__/ws-broadcaster.test.ts
          │   ┌─────────────────────────────────────────────┐
          │   │ import { describe, it, expect, vi } from    │
@@ -371,6 +412,8 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          │   创建 src/hooks/__tests__/useWebSocket.test.ts
          │
          └── 写入结果到收件箱
+             src/lib/agent/managers.ts:L409  MessageBus.readInbox()
+               (子 Agent 外部进程直接写入 JSONL 文件)
              .team/inbox/tester.jsonl
              ┌─────────────────────────────────────────────┐
              │ {"from":"tester","to":"lead",                │
@@ -384,6 +427,7 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  TeammateManager.setStatus("tester", "idle")               │
+│  src/lib/agent/managers.ts:L466  TeammateManager.setStatus() │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -395,18 +439,24 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
 └─────────────────────────────────────────────────────────────┘
          │
          ├── 调用 read_file (读取收件箱)
+         │   src/app/api/chat/route.ts:L88  toolHandlers.read_file → runRead()
          │   .team/inbox/ws-engineer.jsonl
          │   → "WebSocket 服务端已完成..."
          │
          ├── 调用 read_file (读取收件箱)
+         │   src/app/api/chat/route.ts:L88  toolHandlers.read_file → runRead()
          │   .team/inbox/tester.jsonl
          │   → "测试文件已创建..."
          │
          ├── 调用 task_update
+         │   src/app/api/chat/route.ts:L98  toolHandlers.task_update
+         │     → TASK_MGR.update(tid, status)
+         │   src/lib/agent/managers.ts:L154  TaskManager.update() 方法
          │   task_update({ id: 1, status: "completed" })
          │   task_update({ id: 3, status: "completed" })
          │
          └── 调用 task_update
+             src/lib/agent/managers.ts:L154  TaskManager.update()
              task_update({ id: 2, status: "in_progress" })
              → 开始实现 useWebSocket Hook (任务 #2 被解锁)
 ```
@@ -425,11 +475,15 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 background_run                                         │
+│  src/app/api/chat/route.ts:L60    TOOLS[7] background_run   │
+│  src/app/api/chat/route.ts:L94    toolHandlers.background_run│
+│    → BG_MGR.run(command, timeout)                            │
 │  {                                                           │
 │    command: "cd /project && pnpm test -- --run",             │
 │    timeout: 180                                              │
 │  }                                                           │
 │                                                             │
+│  src/lib/agent/managers.ts:L246  BackgroundManager.run()     │
 │  BG_MGR.run() 执行:                                         │
 │  ├── 并发检查: 0/5 running → 通过                            │
 │  ├── tid = "a1b2c3d4"                                       │
@@ -512,12 +566,16 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Agent 循环第 N 轮开始:                                      │
+│  src/app/api/chat/route.ts:L137  Agent 循环 for loop        │
+│  src/app/api/chat/route.ts:L149  BG_MGR.drain() 调用        │
 │                                                             │
 │  const notifs = BG_MGR.drain();                             │
 │  // notifs = [{ task_id: "a1b2c3d4", status: "completed",   │
 │  //             result: "7 passed, 0 failed" }]             │
 │                                                             │
+│  src/lib/agent/managers.ts:L288  BackgroundManager.drain()   │
 │  → 注入合成消息到 messages:                                   │
+│  src/app/api/chat/route.ts:L150-L154  消息注入逻辑           │
 │  {                                                           │
 │    role: "user",                                             │
 │    content: "<background-results>\n                          │
@@ -534,12 +592,17 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  GET /api/state (2s 轮询)                                    │
+│  src/app/api/state/route.ts:L7    GET handler                │
+│  src/app/api/state/route.ts:L43   ETag 计算                  │
+│  src/app/api/state/route.ts:L46   BG_MGR.drain() 调用       │
 │                                                             │
 │  ETag 计算后 → BG_MGR.drain()                               │
 │  → bgNotifs = [{ task_id: "a1b2c3d4", ... }]                │
 │  → 返回给客户端                                              │
 │                                                             │
-│  page.tsx 处理:                                              │
+│  page.tsx 处理:
+│  src/app/page.tsx:L55-L93    2s 轮询 useEffect
+│  src/app/page.tsx:L78-L87    bgNotifs → assistant 消息                                              │
 │  if (data.bgNotifs?.length) {                                │
 │    setMessages(prev => [...prev, ...data.bgNotifs.map(n => ({│
 │      id: msgId(),                                            │
@@ -571,6 +634,10 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 cron_schedule                                         │
+│  src/app/api/chat/route.ts:L66    TOOLS[13] cron_schedule   │
+│  src/app/api/chat/route.ts:L100   toolHandlers.cron_schedule │
+│    → CRON_MGR.schedule(name, command, interval_ms)          │
+│  src/lib/agent/managers.ts:L308   CronManager.schedule()     │
 │  {                                                           │
 │    name: "ws-health-check",                                  │
 │    command: "curl -s -o /dev/null -w '%{http_code}'          │
@@ -599,9 +666,10 @@ Agent 决定将任务 #1 (WS 服务端) 和任务 #3 (测试) 并行派发给子
 
 ```
 setInterval 触发
-    │
+    │  src/lib/agent/managers.ts:L318  setInterval 回调
     ▼
 BG_MGR.run("curl ...", 120)
+    │  src/lib/agent/managers.ts:L246  BackgroundManager.run()
     │
     ├── 创建后台任务 tid="e5f6g7h8"
     ├── exec("curl ...") → 子进程
@@ -623,9 +691,13 @@ BG_MGR.run("curl ...", 120)
 └─────────────────────────────────────────────────────────────┘
          │
          ├── 调用 read_file
+         │   src/app/api/chat/route.ts:L88  toolHandlers.read_file → runRead()
          │   src/app/page.tsx → 定位轮询代码
          │
          ├── 调用 edit_file
+         │   src/app/api/chat/route.ts:L56  TOOLS[2] edit_file 定义
+         │   src/app/api/chat/route.ts:L90  toolHandlers.edit_file
+         │     → runEdit(path, old_text, new_text)
          │   ┌─────────────────────────────────────────────┐
          │   │ 替换:                                       │
          │   │ // 旧代码 (2 秒轮询)                         │
@@ -656,6 +728,8 @@ BG_MGR.run("curl ...", 120)
 │        │ └────────────────────────────────────────────────┘
          │
          └── 调用 task_update
+             src/app/api/chat/route.ts:L98  toolHandlers.task_update
+             src/lib/agent/managers.ts:L154  TaskManager.update()
              task_update({ id: 4, status: "completed" })
 ```
 
@@ -664,6 +738,9 @@ BG_MGR.run("curl ...", 120)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 background_run                                         │
+│  src/app/api/chat/route.ts:L60   TOOLS[7] background_run    │
+│  src/app/api/chat/route.ts:L94   toolHandlers.background_run │
+│  src/lib/agent/managers.ts:L246  BackgroundManager.run()     │
 │  {                                                           │
 │    command: "cd /project && pnpm build 2>&1",               │
 │    timeout: 300                                              │
@@ -678,6 +755,10 @@ BG_MGR.run("curl ...", 120)
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Agent 同时调用 compress                                     │
+│  src/app/api/chat/route.ts:L59   TOOLS[5] compress 定义     │
+│  src/app/api/chat/route.ts:L93   toolHandlers.compress       │
+│    → compressMessages(messages)                               │
+│  src/app/api/chat/route.ts:L29   compressMessages() 函数     │
 │  "压缩上下文，清理冗余的工具调用历史"                          │
 │                                                             │
 │  compressMessages() 执行:                                    │
@@ -734,15 +815,22 @@ BG_MGR.run("curl ...", 120)
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 knowledge_ingest                                       │
+│  src/app/api/chat/route.ts:L69   TOOLS[16] knowledge_ingest │
+│  src/app/api/chat/route.ts:L103  toolHandlers.knowledge_ingest│
+│    → KNOWLEDGE_MGR.ingest(path) / .ingestText(text, source) │
 │  { path: "src/app/api/ws/route.ts" }                        │
 │                                                             │
+│  src/lib/agent/knowledge.ts:L193  KnowledgeManager.ingest() │
+│  src/lib/agent/knowledge.ts:L205  _doIngest() 内部实现      │
 │  KnowledgeManager.ingest() 执行:                             │
 │  ├── 读取文件内容                                             │
-│  ├── chunkText() → 3 个 chunk                                │
+│  ├── chunkText() → 3 个 chunk
+│  │   src/lib/agent/knowledge.ts:L31   chunkText() 分块函数                                │
 │  │   [0]: WebSocket 服务器初始化 (500 chars)                  │
 │  │   [1]: 广播器类实现 (480 chars)                            │
 │  │   [2]: HTTP 升级处理 (350 chars)                           │
-│  ├── _embed(chunks) → 3 个向量                               │
+│  ├── _embed(chunks) → 3 个向量
+│  │   src/lib/agent/knowledge.ts:L175  _embed() 调用 embeddings API                               │
 │  ├── 存入 .knowledge/db/chunks.json                          │
 │  └── 更新 .knowledge/docs.json 索引                          │
 │                                                             │
@@ -763,6 +851,9 @@ BG_MGR.run("curl ...", 120)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  调用 artifact_save                                         │
+│  src/app/api/chat/route.ts:L68   TOOLS[15] artifact_save   │
+│  src/app/api/chat/route.ts:L102  toolHandlers.artifact_save │
+│    → ARTIFACT_MGR.save(path, task_id, description)          │                                         │
 │  {                                                           │
 │    taskId: 1,                                                │
 │    filePath: "src/app/api/ws/route.ts",                     │
@@ -777,7 +868,9 @@ BG_MGR.run("curl ...", 120)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Agent 生成最终回复 (SSE message 事件):                       │
+│  Agent 生成最终回复 (SSE message 事件):
+│  src/app/api/chat/route.ts:L81   sendEvent() 函数
+│  src/app/api/chat/route.ts:L195  SSE message 事件发送                       │
 │                                                             │
 │  "WebSocket 实时推送功能已完成！以下是实现摘要：               │
 │                                                             │
@@ -915,6 +1008,10 @@ BG_MGR.run("curl ...", 120)
 | **ETag 缓存** | 全程 | If-None-Match | 减少无效数据传输 |
 
 ### RightPanel 实时展示变化
+
+> 数据源: `src/app/api/state/route.ts:L28-L39` — `stableBody` 构建
+> 轮询: `src/app/page.tsx:L55-L93` — `setInterval(fetchState, 2000)`
+> 渲染: `src/components/RightPanel.tsx:L28` — `RightPanel()` 组件
 
 ```
 时间 →  Phase 1        Phase 2         Phase 3         Phase 4        Phase 5

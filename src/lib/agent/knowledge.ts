@@ -27,9 +27,16 @@ interface ChunkRecord {
     createdAt: string;
 }
 
-/* ── Text chunking ── */
+/**
+ * 文本分块 — 将长文本切分为适合 embedding 的小片段
+ * 策略: 按段落(双换行)分割 → 合并短段落 → 拆分超长段落 → 相邻块保留重叠窗口
+ * @param text    原始文本
+ * @param maxLen  单块最大字符数 (默认 500)
+ * @param overlap 相邻块重叠字符数 (默认 50)
+ * @returns       分块后的字符串数组
+ */
 function chunkText(text: string, maxLen = CHUNK_MAX, overlap = CHUNK_OVERLAP): string[] {
-    // Normalize line endings
+    // 统一换行符为 \n
     const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
     // Split by double newline (paragraphs)
@@ -78,11 +85,25 @@ function chunkText(text: string, maxLen = CHUNK_MAX, overlap = CHUNK_OVERLAP): s
     return chunks.filter(c => c.length > 0);
 }
 
-/* ── BM25 scoring (lightweight, no deps) ── */
+/**
+ * 分词器 — 支持英文单词和中文字符 (CJK)
+ * 规则: 小写化 → 按非字母数字中文分割 → 过滤长度 ≤1 的 token
+ */
 function tokenize(text: string): string[] {
     return text.toLowerCase().split(/[^a-z0-9\u4e00-\u9fff]+/).filter(t => t.length > 1);
 }
 
+/**
+ * BM25 关键词评分 — 经典信息检索算法
+ * 公式: score += IDF(qt) × TF_norm(qt)
+ *   IDF(qt) = log((N - df + 0.5) / (df + 0.5) + 1)
+ *   TF_norm = tf × (k1+1) / (tf + k1 × (1 - b + b × dl/avgdl))
+ * @param query     查询文本
+ * @param documents 文档文本数组
+ * @param k1        词频饱和参数 (默认 1.5)
+ * @param b         文档长度归一化参数 (默认 0.75)
+ * @returns         每个文档的 BM25 分数
+ */
 function bm25Score(query: string, documents: string[], k1 = 1.5, b = 0.75): number[] {
     const queryTokens = tokenize(query);
     const docTokens = documents.map(d => tokenize(d));
@@ -113,7 +134,11 @@ function bm25Score(query: string, documents: string[], k1 = 1.5, b = 0.75): numb
     });
 }
 
-/* ── Cosine similarity ── */
+/**
+ * 余弦相似度 — 计算两个向量的夹角余弦值
+ * 公式: cos(θ) = dot(a,b) / (||a|| × ||b||)
+ * 结果范围: [-1, 1], 越接近 1 表示越相似
+ */
 function cosineSim(a: number[], b: number[]): number {
     let dot = 0, na = 0, nb = 0;
     for (let i = 0; i < a.length; i++) {
@@ -172,6 +197,12 @@ export class KnowledgeManager {
         fs.writeFileSync(chunksFile, JSON.stringify(this.chunks), 'utf8');
     }
 
+    /**
+     * 调用 Embedding API 将文本转换为向量
+     * 使用 OpenAI 兼容接口, 支持火山引擎 Ark 等第三方服务
+     * @param texts 待 embedding 的文本数组
+     * @returns     对应的浮点向量数组 (每个 1536 维)
+     */
     private async _embed(texts: string[]): Promise<number[][]> {
         if (texts.length === 0) return [];
         const response = await this.client.embeddings.create({
@@ -190,6 +221,10 @@ export class KnowledgeManager {
 
     /* ── Public API ── */
 
+    /**
+     * 导入文件到知识库
+     * 流程: 读取文件 → 分块 → Embedding → 存储到 chunks.json + docs.json
+     */
     async ingest(filePath: string): Promise<string> {
         const content = this._readFile(filePath);
         const source = path.relative(WORKDIR, path.resolve(WORKDIR, filePath));
@@ -202,6 +237,10 @@ export class KnowledgeManager {
         return this._doIngest(text, source);
     }
 
+    /**
+     * 内部导入实现 — 分块 + Embedding + 持久化
+     * 若 source 已存在则先删除旧 chunks 再重新导入 (覆盖更新)
+     */
     private async _doIngest(content: string, source: string): Promise<string> {
         // Check if already exists
         if (this.docs[source]) {
@@ -242,6 +281,15 @@ export class KnowledgeManager {
         return `Ingested ${source}: ${textChunks.length} chunks, ${content.length} chars total.`;
     }
 
+    /**
+     * 混合语义搜索 — 向量相似度 + BM25 关键词融合检索
+     * 步骤:
+     *   1. Embed query → 1536 维向量
+     *   2. 遍历全部 chunks 计算余弦相似度 (语义匹配)
+     *   3. 对全部 chunks 计算 BM25 关键词评分 (精确匹配)
+     *   4. 归一化两组分数到 [0,1], 加权融合: 0.7×向量 + 0.3×BM25
+     *   5. 降序排序取 topK, 过滤低分结果, 格式化输出
+     */
     async search(query: string, topK = 5): Promise<string> {
         if (this.chunks.length === 0) return 'Knowledge base is empty. Use knowledge_ingest to add documents first.';
 

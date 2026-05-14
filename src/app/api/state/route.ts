@@ -4,6 +4,11 @@ import { TASK_MGR, TODO, TEAM_MGR, WORKTREE_MGR, BG_MGR, CRON_MGR, ARTIFACT_MGR,
 
 export const runtime = 'nodejs';
 
+/**
+ * GET /api/state — 全局状态轮询端点
+ * 每 2 秒被客户端调用, 返回 todos/tasks/teammates/bgTasks/cronTasks/artifacts/auditLog/knowledge
+ * 使用 ETag 条件请求: 状态未变且无通知时返回 304 节省带宽
+ */
 export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const filter: TaskFilter = {
@@ -38,11 +43,11 @@ export async function GET(req: NextRequest) {
         knowledge: KNOWLEDGE_MGR.getStats(),
     };
 
-    // ETag based on stable state only (excludes one-shot notifications)
+    // ETag 仅基于稳定状态计算 (不含一次性通知)
     const stableJson = JSON.stringify(stableBody);
     const etag = `"${createHash('md5').update(stableJson).digest('hex').slice(0, 16)}"`;
 
-    // Drain notifications AFTER ETag check to avoid losing them on 304
+    // 在 ETag 检查之后 drain 通知 — 确保 304 响应不会丢失通知
     const bgNotifs = BG_MGR.drain();
 
     if (req.headers.get('if-none-match') === etag && bgNotifs.length === 0) {
