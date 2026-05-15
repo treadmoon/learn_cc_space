@@ -1,0 +1,13 @@
+{
+  "id": "6cea27ad-fdfa-4456-b739-1d0953ec897c",
+  "title": "读取 package.json 的内",
+  "messages": [
+    {
+      "id": "c821762d",
+      "role": "user",
+      "content": "读取 package.json 的内"
+    }
+  ],
+  "createdAt": "2026-05-14T07:12:50.074Z",
+  "updatedAt": "2026-05-14T07:13:23.128Z"
+}

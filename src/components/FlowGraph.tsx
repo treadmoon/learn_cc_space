@@ -182,13 +182,6 @@ export function FlowGraph({ logs, agentStatus, t, onDismiss }: FlowGraphProps) {
         if (agentStatus !== 'idle') { setVisible(true); setMinimized(false); }
     }, [agentStatus]);
 
-    // Auto-minimize 5s after idle
-    useEffect(() => {
-        if (agentStatus === 'idle' && visible && !minimized && steps.length > 0) {
-            const h = setTimeout(() => setMinimized(true), 5000);
-            return () => clearTimeout(h);
-        }
-    }, [agentStatus, visible, minimized, steps.length]);
 
     if (!visible || steps.length === 0) return null;
 

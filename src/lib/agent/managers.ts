@@ -1,23 +1,59 @@
+/**
+ * Agent 管理器模块 — 所有 Manager 单例的定义和注册
+ *
+ * 本模块是 Agent 的"基础设施层", 提供以下能力:
+ *   - TodoManager:       待办列表 (会话内短期任务跟踪)
+ *   - TaskManager:       持久化任务 (文件存储, 支持依赖/审计)
+ *   - BackgroundManager: 后台 shell 命令执行 (异步, 通知队列)
+ *   - CronManager:       定时调度 (setInterval → BG_MGR)
+ *   - SkillLoader:       技能加载 (skills/ 目录下的 SKILL.md)
+ *   - MessageBus:        成员间消息传递 (破坏性读取 inbox)
+ *   - TeammateManager:   团队成员管理 (.team/config.json)
+ *   - WorktreeManager:   Git worktree 列表
+ *   - ArtifactManager:   制品归档 (.artifacts/)
+ *   - SessionManager:    会话持久化 (.sessions/)
+ *   - KnowledgeManager:  RAG 知识库 (.knowledge/) — 定义在 knowledge.ts
+ *   - McpManager:        MCP Client (.mcp.json) — 定义在 mcp.ts
+ *
+ * 单例模式: 通过 globalForAgent 确保 Next.js HMR 不会重复实例化
+ */
+
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { exec, execSync } from 'node:child_process';
 import { mkdirSync } from './tools';
 import { KnowledgeManager } from './knowledge';
+import { McpManager } from './mcp';
 
 const WORKDIR = process.cwd();
-const TODOS_FILE = path.join(WORKDIR, '.todos.json');
-const TASKS_DIR = path.join(WORKDIR, '.tasks');
-const AUDIT_FILE = path.join(TASKS_DIR, 'audit.jsonl');
-const TEAM_DIR = path.join(WORKDIR, '.team');
-const INBOX_DIR = path.join(TEAM_DIR, 'inbox');
+const TODOS_FILE = path.join(WORKDIR, '.todos.json');      // 待办列表持久化文件
+const TASKS_DIR = path.join(WORKDIR, '.tasks');             // 持久化任务目录
+const AUDIT_FILE = path.join(TASKS_DIR, 'audit.jsonl');     // 任务审计日志
+const TEAM_DIR = path.join(WORKDIR, '.team');               // 团队协作目录
+const INBOX_DIR = path.join(TEAM_DIR, 'inbox');             // 成员收件箱
 
+/**
+ * 待办项 — 会话内的短期任务跟踪单元
+ * content: 任务描述
+ * status: pending(待办) / in_progress(进行中, 限 1 个) / completed(已完成)
+ * activeForm: 进行中时的动词描述 (如 "正在编写测试"), 前端展示用
+ */
 export interface TodoItem {
     content: string;
     status: 'pending' | 'in_progress' | 'completed';
     activeForm: string;
 }
 
+/**
+ * TodoManager — 待办列表管理
+ *
+ * 存储: .todos.json (全量替换, 非增量)
+ * 特性:
+ *   - 最多 20 项, 最多 1 个 in_progress
+ *   - LLM 每次调用 TodoWrite 全量覆盖, render() 返回文本供下一轮参考
+ *   - 与 TaskManager 不同: Todo 是会话级轻量跟踪, Task 是跨会话持久化
+ */
 export class TodoManager {
     public items: TodoItem[];
 
@@ -89,12 +125,33 @@ export class TodoManager {
     }
 }
 
+/**
+ * 任务过滤器 — 供 listAllStructured() 和 /api/state 使用
+ * status: 按状态过滤 (pending/in_progress/completed/deleted)
+ * owner:  按负责人过滤 (子 Agent 名称)
+ * keyword: 按主题/描述关键词搜索
+ */
 export interface TaskFilter {
     status?: string;
     owner?: string;
     keyword?: string;
 }
 
+/**
+ * TaskManager — 持久化任务管理
+ *
+ * 存储: .tasks/task_{id}.json (每个任务独立文件, 自增 ID)
+ * 审计: .tasks/audit.jsonl (追加写入, 记录 create/update/delete/claim)
+ *
+ * 与 TodoManager 的区别:
+ *   - Todo: 会话级, 内存 + .todos.json, LLM 全量覆盖
+ *   - Task: 跨会话, 文件系统持久化, 支持依赖关系和审计日志
+ *
+ * 依赖关系:
+ *   - blockedBy: 本任务被哪些任务阻塞 (上游未完成则不能开始)
+ *   - blocks:    本任务阻塞了哪些任务 (下游等待本任务完成)
+ *   - completed 时自动从其他任务的 blockedBy 中移除 (解锁下游)
+ */
 export class TaskManager {
     constructor() {
         mkdirSync(TASKS_DIR);
@@ -254,10 +311,25 @@ export class TaskManager {
     }
 }
 
+/**
+ * BackgroundManager — 后台任务执行器
+ *
+ * 核心机制:
+ *   - run() 通过 child_process.exec 异步执行 shell 命令, 不阻塞 Agent 循环
+ *   - 完成后将结果 push 到 notifications 队列
+ *   - drain() 一次性取出所有通知后清空 (一次性消费语义)
+ *
+ * 双消费者模型:
+ *   消费者 1: Agent 循环 (route.ts) — 注入为 <background-results> 合成消息
+ *   消费者 2: State API (state/route.ts) — 作为 bgNotifs 返回给前端
+ *
+ * 并发控制: 最多 5 个同时运行的后台任务
+ * 超时: 默认 120 秒, 超时后状态标记为 'timeout'
+ */
 export class BackgroundManager {
-    public tasks: Record<string, any>;
-    public notifications: any[];
-    private maxConcurrent = 5;
+    public tasks: Record<string, any>;        // 所有任务 { tid → { status, command, result } }
+    public notifications: any[];              // 完成通知队列, 等待 drain() 消费
+    private maxConcurrent = 5;                // 最大并发数
 
     constructor() {
         this.tasks = {};
@@ -331,9 +403,22 @@ export class BackgroundManager {
     }
 }
 
+/**
+ * CronManager — 定时调度管理
+ *
+ * 机制: setInterval 定期触发, 内部委托 BG_MGR.run() 执行
+ * 结果与普通后台任务共享同一套 drain 通知管道
+ *
+ * 使用场景:
+ *   - 定期轮询外部服务状态
+ *   - 定时执行数据同步脚本
+ *   - 周期性清理临时文件
+ *
+ * 存储: 纯内存 (进程重启后丢失, 不持久化)
+ */
 export class CronManager {
     public tasks: Record<string, { id: string; command: string; intervalMs: number; timer: NodeJS.Timeout | null; lastRun: string | null; count: number }>;
-    
+
     constructor() {
         this.tasks = {};
     }
@@ -385,6 +470,24 @@ export class CronManager {
     }
 }
 
+/**
+ * SkillLoader — 技能文件加载器
+ *
+ * 技能 (Skill) ≠ 工具 (Tool):
+ *   - Tool: 可执行的函数 (如 bash, read_file), 产生副作用
+ *   - Skill: Markdown 知识文档, 注入上下文供 LLM 参考, 不执行任何操作
+ *
+ * 存储: skills/{name}/SKILL.md (带 YAML frontmatter)
+ * 格式:
+ *   ---
+ *   name: my-skill
+ *   description: 一行描述
+ *   ---
+ *   技能正文 (Markdown)
+ *
+ * 调用: LLM 调用 load_skill(name) → 返回 <skill> 标签包裹的 Markdown 文本
+ * 加载时机: 进程启动时一次性扫描 skills/ 目录, 运行时不重新加载
+ */
 export class SkillLoader {
     public skills: Record<string, { meta: any; body: string }> = {};
 
@@ -439,6 +542,20 @@ export class SkillLoader {
     }
 }
 
+/**
+ * MessageBus — 成员间消息传递
+ *
+ * 模型: 破坏性读取 (destructive read)
+ *   - 写入: appendFile 追加到 .team/inbox/{name}.jsonl
+ *   - 读取: 读取全部内容后立即清空文件
+ *   - 语义: fire-and-forget, 消息被读取后即丢失
+ *
+ * 与传统消息队列的区别:
+ *   - 无持久化保留 (读完即删)
+ *   - 无重试机制
+ *   - 无确认机制
+ *   - 适用场景: 子 Agent 间一次性结果传递
+ */
 export class MessageBus {
     constructor() {
         mkdirSync(INBOX_DIR);
@@ -462,9 +579,24 @@ export class MessageBus {
     }
 }
 
+/**
+ * TeammateManager — 团队成员管理
+ *
+ * 存储: .team/config.json (JSON 配置文件)
+ * 成员状态: working(执行中) / idle(空闲)
+ *
+ * 生命周期:
+ *   spawn(name, role) → 注册成员 + 设为 working
+ *   setStatus(name, 'idle') → 标记为空闲
+ *
+ * 与子 Agent 的协作流程:
+ *   1. 主 Agent 调用 spawn() 注册子 Agent
+ *   2. 子 Agent 通过 MessageBus 收发消息
+ *   3. 任务完成后 setStatus('idle')
+ */
 export class TeammateManager {
     public configPath: string;
-    
+
     constructor() {
         mkdirSync(TEAM_DIR);
         this.configPath = path.join(TEAM_DIR, 'config.json');
@@ -525,6 +657,13 @@ export class TeammateManager {
     }
 }
 
+/**
+ * WorktreeManager — Git worktree 列表查询
+ *
+ * 只读操作: 执行 `git worktree list` 返回当前仓库的所有 worktree
+ * 用途: 前端 RightPanel 展示当前分支/worktree 状态
+ * 不管理 worktree 的创建/删除 (由 git 命令直接操作)
+ */
 export class WorktreeManager {
     list(): string {
         try {
@@ -550,6 +689,17 @@ export interface ArtifactMeta {
     files: ArtifactFile[];
 }
 
+/**
+ * ArtifactManager — 制品归档管理
+ *
+ * 存储: .artifacts/
+ *   .artifacts/task-{id}/     ← 关联到特定任务的制品
+ *   .artifacts/shared/        ← 未关联任务的共享制品
+ *   每个目录下有 _meta.json   ← 记录文件列表和元信息
+ *
+ * 用途: Agent 执行任务过程中产生的输出文件 (报告、代码、配置等)
+ * 操作: save() 复制文件到归档目录 + 更新元信息
+ */
 export class ArtifactManager {
     constructor() {
         mkdirSync(ARTIFACTS_DIR);
@@ -628,6 +778,24 @@ export interface SessionSummary {
     updatedAt: string;
 }
 
+/**
+ * SessionManager — 会话持久化管理
+ *
+ * 存储: .sessions/{uuid}.json (每个会话一个文件)
+ * 数据结构:
+ *   { id, title, messages: [{role, content}], createdAt, updatedAt }
+ *
+ * 保存时机: SSE 流收到 'done' 事件时, 客户端自动调用 PATCH /api/sessions
+ * 注意: 保存的是完整 messages 数组 (含 tool 结果), 不受 compressMessages 影响
+ *
+ * 会话操作:
+ *   create()      → 创建新会话 (UUID)
+ *   list()        → 列出所有会话 (按 updatedAt 降序)
+ *   get(id)       → 获取单个会话
+ *   update(id, m) → 更新消息和标题
+ *   delete(id)    → 删除会话
+ *   getLatest()   → 获取最近的会话 (页面加载时恢复)
+ */
 export class SessionManager {
     constructor() {
         mkdirSync(SESSIONS_DIR);
@@ -706,6 +874,13 @@ export class SessionManager {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 单例注册 — globalForAgent 模式确保 HMR 安全
+// ═══════════════════════════════════════════════════════════════
+// Next.js 开发模式下 HMR 会重新执行模块代码, 如果直接 new XXX()
+// 每次 HMR 都会创建新实例, 丢失内存状态 (如 BackgroundManager 的任务列表)
+// 解决: 将实例挂在 global 对象上, HMR 时优先复用已有实例
+
 const globalForAgent = global as unknown as {
     TODO: TodoManager;
     TASK_MGR: TaskManager;
@@ -718,8 +893,10 @@ const globalForAgent = global as unknown as {
     ARTIFACT_MGR: ArtifactManager;
     SESSION_MGR: SessionManager;
     KNOWLEDGE_MGR: KnowledgeManager;
+    MCP_MGR: McpManager;
 };
 
+// 导出单例 — 全局唯一实例, 其他模块直接 import 使用
 export const TODO = globalForAgent.TODO || new TodoManager();
 export const TASK_MGR = globalForAgent.TASK_MGR || new TaskManager();
 export const BG_MGR = globalForAgent.BG_MGR || new BackgroundManager();
@@ -731,6 +908,9 @@ export const WORKTREE_MGR = globalForAgent.WORKTREE_MGR || new WorktreeManager()
 export const ARTIFACT_MGR = globalForAgent.ARTIFACT_MGR || new ArtifactManager();
 export const SESSION_MGR = globalForAgent.SESSION_MGR || new SessionManager();
 export const KNOWLEDGE_MGR = globalForAgent.KNOWLEDGE_MGR || new KnowledgeManager();
+export const MCP_MGR = globalForAgent.MCP_MGR || new McpManager();
+
+// 开发模式: 将实例挂回 global, 下次 HMR 时复用
 
 if (process.env.NODE_ENV !== 'production') {
     globalForAgent.TODO = TODO;
@@ -744,6 +924,7 @@ if (process.env.NODE_ENV !== 'production') {
     globalForAgent.ARTIFACT_MGR = ARTIFACT_MGR;
     globalForAgent.SESSION_MGR = SESSION_MGR;
     globalForAgent.KNOWLEDGE_MGR = KNOWLEDGE_MGR;
+    globalForAgent.MCP_MGR = MCP_MGR;
 }
 
 /**

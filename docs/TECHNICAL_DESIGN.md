@@ -127,17 +127,145 @@ RootLayout
 
 ## 5. Agent 工具系统
 
-### 5.1 工具注册模式
+### 5.1 架构总览
 
-```typescript
-// route.ts — TOOLS 数组
-{ type: 'function', function: { name: 'tool_name', description: '...', parameters: { ... } } }
+工具系统由三层构成: **声明层** (TOOLS) → **路由层** (toolHandlers + MCP) → **执行层** (Manager/函数)
 
-// route.ts — toolHandlers 映射
-tool_name: (kw: any) => MANAGER.method(kw.arg1, kw.arg2)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  声明层: TOOLS 数组 (OpenAI function-calling 格式)              │
+│  告诉 LLM "你有哪些工具可用", 含 name / description / parameters │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ LLM 返回 tool_calls
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  路由层: createToolHandlers() + loadMcpTools()                  │
+│  按 tool name 查找 handler:                                     │
+│    内置工具 → toolHandlers[name] (静态映射)                      │
+│    MCP 工具 → MCP_MGR.callTool(name, args) (动态路由)           │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ handler(args)
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  执行层: Manager 单例 / 独立函数                                 │
+│  runBash(), KNOWLEDGE_MGR.search(), TASK_MGR.create() ...      │
+│  返回 string 结果 → 注入 messages → 下一轮 LLM 参考             │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.2 工具清单 (19 个)
+### 5.2 工具声明: TOOLS 数组
+
+每个工具遵循 OpenAI function-calling 规范:
+
+```typescript
+// src/app/api/chat/route.ts — TOOLS 数组
+{
+    type: 'function' as const,
+    function: {
+        name: 'knowledge_search',                              // 唯一标识, 用于路由分派
+        description: 'Semantic search over the knowledge base', // 告诉 LLM 何时使用
+        parameters: {                                          // JSON Schema, LLM 按此生成参数
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Search query' },
+                top_k: { type: 'number', description: 'Number of results (default 5)' }
+            },
+            required: ['query']
+        }
+    }
+}
+```
+
+`description` 是 LLM 决策的关键 — 写得越精确, LLM 选工具越准确。
+
+### 5.3 工具路由: createToolHandlers() 工厂
+
+`createToolHandlers(messages, reqId)` 是模块级工厂函数, 返回 `Record<string, Function>` 映射表。
+
+为什么用工厂而非静态对象? 因为有两个 handler 需要请求级参数:
+
+| handler | 需要的参数 | 原因 |
+|---------|-----------|------|
+| `compress` | `messages` | 原地压缩当前对话的 messages 数组 |
+| `task_create` | `reqId` | 写入审计日志时标记请求来源 |
+
+```typescript
+// 模块级定义 — 不依赖任何闭包变量
+function createToolHandlers(messages: any[], reqId: string): Record<string, Function> {
+    return {
+        bash:       (kw) => runBash(kw.command),
+        read_file:  (kw) => runRead(kw.path),
+        // ... 其余 17 个纯静态委托
+        compress:   ()  => compressMessages(messages),       // ← 需要 messages
+        task_create:(kw) => TASK_MGR.create(kw.subject, '', 'agent', { reqId }), // ← 需要 reqId
+    };
+}
+
+// 请求入口内调用 — 注入当前请求的 messages 和 reqId
+const toolHandlers = createToolHandlers(messages, reqId);
+```
+
+### 5.4 工具执行: executeToolCalls() 函数
+
+LLM 返回 `tool_calls` 后, `executeToolCalls()` 逐个执行:
+
+```
+for each block in tool_calls:
+  ① 查找 handler — 内置 → MCP → fallback
+  ② 解析 JSON 参数 — 失败则注入错误消息, 跳过执行
+  ③ await handler(args) — 支持异步工具
+  ④ 结果推入 messages — 供下一轮 LLM 参考
+```
+
+```typescript
+// src/app/api/chat/route.ts
+async function executeToolCalls(
+    toolCalls,      // LLM 返回的 tool_calls 数组
+    toolHandlers,   // 内置 handler 映射
+    mcpToolNames,   // MCP 工具名集合
+    messages,       // 结果注入目标
+    reqId,          // 日志标记
+    sendEvent       // SSE 推送
+): Promise<void>
+```
+
+关键设计:
+- 参数解析失败不抛异常, 而是注入错误文本让 LLM 自行修正
+- 每个工具调用都通过 SSE 推送日志, 前端 FlowGraph 实时可视化
+- `await` 支持异步工具 (如 `knowledge_ingest` 需要调用 Embedding API)
+
+### 5.5 MCP 工具动态加载
+
+除内置 19 个工具外, 还可通过 `.mcp.json` 配置 MCP Server, 动态注入外部工具:
+
+```typescript
+// src/app/api/chat/route.ts — loadMcpTools()
+const { activeTools, mcpToolNames } = await loadMcpTools(TOOLS, reqId, sendEvent);
+// activeTools = [...内置工具, ...MCP工具]
+// mcpToolNames = Set<string> — 用于执行时判断走哪条路由
+```
+
+```
+.mcp.json 配置
+    ↓
+McpManager.getTools() — 懒连接 MCP Server, 获取工具列表
+    ↓
+转换为 OpenAI function-calling 格式 (name 加 server 前缀)
+    ↓
+合并到 activeTools — LLM 同时看到内置 + MCP 工具
+```
+
+工具执行时的路由判断:
+
+```typescript
+const handler = toolHandlers[name] ?? (
+    mcpToolNames.has(name)
+        ? (kw) => MCP_MGR.callTool(name, kw)   // MCP 路由
+        : () => 'Unknown tool'                   // fallback
+);
+```
+
+### 5.6 工具清单 (19 个内置 + MCP 动态)
 
 | 工具 | 类型 | 说明 |
 |------|------|------|
@@ -159,12 +287,124 @@ tool_name: (kw: any) => MANAGER.method(kw.arg1, kw.arg2)
 | `artifact_save` | 制品 | 保存文件为任务制品 |
 | `knowledge_ingest` | RAG | 导入文件/文本到知识库 |
 | `knowledge_search` | RAG | 语义搜索知识库 |
+| MCP 动态工具 | 外部 | `.mcp.json` 配置的 MCP Server 提供 |
 
-### 5.3 安全机制
+### 5.7 安全机制
 
 - `safePath()`: 路径沙箱, 防止目录穿越
 - `BLOCKED_PATTERNS`: 拦截 `rm -rf /`, `sudo`, 反向 shell, fork bomb 等
 - 大输出持久化到 `.task_outputs/tool-results/`, 避免撑爆 context
+
+### 5.8 典型工具示例
+
+#### 示例 1: `bash` — 纯委托型
+
+最简单的模式: LLM 生成参数 → 直接委托给独立函数。
+
+```typescript
+// 声明 (TOOLS 数组)
+{
+    type: 'function',
+    function: {
+        name: 'bash',
+        description: 'Run bash command.',
+        parameters: {
+            type: 'object',
+            properties: { command: { type: 'string' } },
+            required: ['command']
+        }
+    }
+}
+
+// 路由 (toolHandlers)
+bash: (kw) => runBash(kw.command)
+
+// 执行 (src/lib/agent/tools.ts)
+export function runBash(command: string): string {
+    // 安全检查 → execSync → 截断输出 → 返回 string
+}
+```
+
+LLM 调用流程:
+```
+LLM → tool_calls: [{ function: { name: 'bash', arguments: '{"command":"ls -la"}' } }]
+    → executeToolCalls() 解析 JSON → toolHandlers['bash']({ command: 'ls -la' })
+    → runBash('ls -la') → "total 48\ndrwxr-xr-x  ..."
+    → messages.push({ role: 'tool', content: 'total 48\n...' })
+    → LLM 读取结果, 继续推理
+```
+
+#### 示例 2: `knowledge_search` — 异步 RAG 型
+
+涉及外部 API 调用 (Embedding), 需要 `async/await`:
+
+```typescript
+// 路由 (toolHandlers)
+knowledge_search: async (kw) => await KNOWLEDGE_MGR.search(kw.query, kw.top_k)
+```
+
+执行流程 (5 步混合检索):
+```
+① Embed query → 1536 维向量 (调用 Embedding API)
+② 遍历 chunks 计算余弦相似度 (向量匹配)
+③ BM25 关键词评分 (精确匹配)
+④ 归一化 + 加权融合 (0.7×向量 + 0.3×BM25)
+⑤ 排序取 topK, 格式化返回
+```
+
+结果示例:
+```
+Found 3 relevant chunks:
+
+[Result 1] (score: 0.892) source: docs/api.md#2
+The authentication flow uses JWT tokens...
+
+---
+
+[Result 2] (score: 0.754) source: README.md#0
+Setup requires setting ANTHROPIC_API_KEY...
+```
+
+#### 示例 3: `compress` — 闭包依赖型
+
+唯一需要捕获 `messages` 引用的工具 — 原地修改对话历史:
+
+```typescript
+// 路由 (toolHandlers) — messages 来自 createToolHandlers 参数
+compress: () => compressMessages(messages)
+```
+
+压缩策略:
+```
+保留最近 4 条 user/assistant 消息
+旧消息替换为 [Context compressed: removed N messages]
+工具结果 (role:tool) 全部保留 (后续步骤可能依赖)
+```
+
+#### 示例 4: MCP 工具 — 动态路由型
+
+MCP 工具不在 `toolHandlers` 中注册, 而是通过 `mcpToolNames` 集合动态分派:
+
+```typescript
+// .mcp.json
+{ "mcpServers": { "tavily": { "command": "npx", "args": ["-y", "tavily-mcp"] } } }
+
+// McpManager 连接后, 工具自动注册:
+// tavily_tavily-search → MCP_MGR.callTool('tavily_tavily-search', args)
+// tavily_tavily-extract → MCP_MGR.callTool('tavily_tavily-extract', args)
+```
+
+路由判断:
+```typescript
+// executeToolCalls() 中
+const handler = toolHandlers[name] ?? (
+    mcpToolNames.has(name)
+        ? (kw) => MCP_MGR.callTool(name, kw)   // ← MCP 路由
+        : () => 'Unknown tool'
+);
+```
+
+MCP 工具对 LLM 来说与内置工具无异 — 同样的 `tool_calls` 格式, 同样的结果注入。
 
 ---
 
@@ -338,6 +578,29 @@ background_run(command)
 ```
 
 ### 8.3 通知 Drain 机制
+
+#### 什么是 drain？
+
+后台任务通过 `child_process.exec` 异步执行，主 Agent 循环不会等待它完成。那任务完成后，结果怎么送达？答案是 **drain 通知队列**。
+
+`drain()` 的语义是"排空"——取出队列中所有通知（拷贝），然后**立即清空**队列。取一次就没了，不会重复消费。
+
+```
+后台任务完成 → push 到 notifications[] → 等待消费者 drain()
+                                           ↓
+                                    取出 + 清空队列
+```
+
+#### 为什么不用发布/订阅？
+
+这个场景足够简单：
+- 通知是**一次性的**（任务完成就完了，不需要重放）
+- 消费者数量固定（2 个：Agent 循环 + State API）
+- 不需要 topic/subscription 抽象
+
+一个数组 + `drain()` 就是最小够用的方案。
+
+#### 两个消费者
 
 通知采用**一次性消费**模式，`drain()` 取出所有待处理通知后立即清空队列。
 

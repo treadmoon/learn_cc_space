@@ -185,13 +185,6 @@ export function FlowOverlay({ logs, agentStatus, t, onDismiss }: FlowOverlayProp
         if (agentStatus !== 'idle') { setVisible(true); setMinimized(false); }
     }, [agentStatus]);
 
-    // Auto-minimize 5s after idle
-    useEffect(() => {
-        if (agentStatus === 'idle' && visible && !minimized && steps.length > 0) {
-            const h = setTimeout(() => setMinimized(true), 5000);
-            return () => clearTimeout(h);
-        }
-    }, [agentStatus, visible, minimized, steps.length]);
 
     // Auto-scroll to bottom
     useEffect(() => {
