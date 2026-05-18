@@ -75,14 +75,31 @@ export class TodoManager {
     }
 
     /**
-     * 更新待办列表 — 全量替换
-     * 规则: 最多 20 项, 最多 1 个 in_progress, 每项必须有 content 和 activeForm
-     * 存储: .todos.json (原子写入)
+     * 更新待办列表 — 全量替换 (非增量)
+     *
+     * LLM 每次调用 TodoWrite 时传入完整的 items 数组, 整体替换旧列表。
+     * 选择全量替换而非增量更新的原因:
+     *   - LLM 更擅长生成完整列表 (减少部分更新的歧义)
+     *   - 简化状态机 (不需要处理 add/remove/update 单项的复杂逻辑)
+     *
+     * 校验规则:
+     *   1. 每项必须有 content (非空) 和 activeForm (进行时的动词描述)
+     *   2. status 只允许 pending / in_progress / completed
+     *   3. 最多 20 项 (防止 LLM 生成过长列表浪费 context)
+     *   4. 最多 1 个 in_progress (强制聚焦, 避免多任务并行混乱)
+     *
+     * 执行流程:
+     *   遍历校验 → 全量替换 this.items → 持久化到 .todos.json → 返回渲染文本
+     *
+     * @param items  LLM 生成的待办数组 [{content, status, activeForm}, ...]
+     * @returns      渲染后的文本 (供 LLM 下一轮参考)
+     * @throws       校验失败时抛出 Error (LLM 会收到错误消息并自行修正)
      */
     update(items: any[]): string {
         const validated: TodoItem[] = [];
         let inProgressCount = 0;
 
+        // 逐项校验: 类型转换 + 必填检查 + 枚举校验
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             const content = String(item.content || '').trim();
@@ -99,24 +116,53 @@ export class TodoManager {
             validated.push({ content, status, activeForm });
         }
 
+        // 全局约束: 数量上限 + 单任务聚焦
         if (validated.length > 20) throw new Error('Max 20 todos');
         if (inProgressCount > 1) throw new Error('Only one in_progress allowed');
 
+        // 全量替换 + 持久化 + 返回渲染文本
         this.items = validated;
         this._save();
         return this.render();
     }
 
+    /**
+     * 渲染待办列表为文本 — 供 LLM 阅读的格式化输出
+     *
+     * 输出格式:
+     *   [x] 已完成的任务
+     *   [>] 正在执行的任务 <- 正在执行的动作
+     *   [ ] 待办任务
+     *
+     *   (2/5 completed)
+     *
+     * 状态标记:
+     *   [x] completed — 已完成
+     *   [>] in_progress — 进行中 (附加 activeForm 描述)
+     *   [ ] pending — 待办
+     *   [?] unknown — 未知状态 (防御性 fallback)
+     *
+     * 末尾追加进度统计: (已完成数/总数 completed)
+     *
+     * @returns 格式化的待办文本
+     */
     render(): string {
         if (!this.items.length) return 'No todos.';
+
+        // 状态 → 标记符号映射
         const statusMap: Record<string, string> = { completed: '[x]', in_progress: '[>]', pending: '[ ]' };
+
         const lines = this.items.map(item => {
             const mark = statusMap[item.status] || '[?]';
+            // in_progress 项附加 activeForm, 告诉 LLM 当前正在做什么
             const suffix = item.status === 'in_progress' ? ` <- ${item.activeForm}` : '';
             return `${mark} ${item.content}${suffix}`;
         });
+
+        // 追加进度统计
         const done = this.items.filter((t: TodoItem) => t.status === 'completed').length;
         lines.push(`\n(${done}/${this.items.length} completed)`);
+
         return lines.join('\n');
     }
 
@@ -157,11 +203,24 @@ export class TaskManager {
         mkdirSync(TASKS_DIR);
     }
 
+    /* ── 内部方法 ── */
+
+    /**
+     * 写入审计日志 — 追加到 .tasks/audit.jsonl
+     * 每行一个 JSON: { ts, action, taskId, actor, details }
+     * action 类型: create / update / delete / claim
+     * actor: 操作者 (默认 'agent', 也可能是子 Agent 名称)
+     */
     private _audit(action: string, taskId: number, actor: string = 'agent', details: Record<string, unknown> = {}) {
         const entry = { ts: new Date().toISOString(), action, taskId, actor, details };
         fs.appendFileSync(AUDIT_FILE, JSON.stringify(entry) + '\n', 'utf8');
     }
 
+    /**
+     * 读取审计日志 — 支持按 taskId 过滤
+     * 返回最近 limit 条记录 (倒序, 最新的在前)
+     * 供 /api/state 返回给前端 RightPanel 展示
+     */
     getAuditLog(taskId?: number, limit: number = 50): Array<{ ts: string; action: string; taskId: number; actor: string; details: Record<string, unknown> }> {
         try {
             if (!fs.existsSync(AUDIT_FILE)) return [];
@@ -176,6 +235,11 @@ export class TaskManager {
         }
     }
 
+    /**
+     * 生成下一个任务 ID — 扫描 .tasks/ 目录中已有文件取最大值 +1
+     * 策略: 文件名即 ID (task_1.json, task_2.json, ...), 无需额外的计数器文件
+     * 首个任务返回 1
+     */
     private _nextId(): number {
         const ObjectFiles = fs.readdirSync(TASKS_DIR).filter(f => f.startsWith('task_') && f.endsWith('.json'));
         if (!ObjectFiles.length) return 1;
@@ -183,21 +247,42 @@ export class TaskManager {
         return Math.max(...ids) + 1;
     }
 
+    /**
+     * 从文件加载任务 — 读取 .tasks/task_{tid}.json
+     * @throws Task 不存在时抛出 Error
+     */
     private _load(tid: string | number): any {
         const p = path.join(TASKS_DIR, `task_${tid}.json`);
         if (!fs.existsSync(p)) throw new Error(`Task ${tid} not found`);
         return JSON.parse(fs.readFileSync(p, 'utf8'));
     }
 
+    /**
+     * 保存任务到文件 — 写入 .tasks/task_{id}.json
+     * 全量覆盖 (非增量更新)
+     */
     private _save(task: any) {
         const p = path.join(TASKS_DIR, `task_${task.id}.json`);
         fs.writeFileSync(p, JSON.stringify(task, null, 2), 'utf8');
     }
 
+    /* ── 公开 API ── */
+
     /**
      * 创建持久化任务
-     * 存储: .tasks/task_{id}.json (自增 ID)
-     * 附带: 写入审计日志 .tasks/audit.jsonl
+     *
+     * 流程:
+     *   1. _nextId() 生成自增 ID
+     *   2. 构造任务对象 (status=pending, owner=null, blockedBy=[], blocks=[])
+     *   3. _save() 写入 .tasks/task_{id}.json
+     *   4. _audit() 记录 create 审计日志
+     *   5. 返回 JSON 字符串 (供 LLM 阅读)
+     *
+     * @param subject     任务主题 (必填, 简短描述)
+     * @param description 任务详情 (可选)
+     * @param actor       操作者 (默认 'agent', 子 Agent 时为子 Agent 名称)
+     * @param meta        附加元信息 (写入审计日志, 如 reqId)
+     * @returns           任务 JSON 字符串
      */
     create(subject: string, description: string = '', actor: string = 'agent', meta?: Record<string, unknown>): string {
         const task = {
@@ -205,30 +290,58 @@ export class TaskManager {
             subject,
             description,
             status: 'pending',
-            owner: null,
-            blockedBy: [],
-            blocks: []
+            owner: null,        // 未分配, 等待 claim()
+            blockedBy: [],      // 上游依赖 (这些任务完成后才能开始)
+            blocks: []          // 下游依赖 (本任务完成后解锁这些任务)
         };
         this._save(task);
         this._audit('create', task.id, actor, { subject, ...meta });
         return JSON.stringify(task, null, 2);
     }
 
+    /**
+     * 获取单个任务详情 — 返回 JSON 字符串
+     * @throws Task 不存在时抛出 Error (LLM 会收到错误消息)
+     */
     get(tid: string | number): string {
         return JSON.stringify(this._load(tid), null, 2);
     }
 
     /**
-     * 更新任务状态或依赖关系
+     * 更新任务状态或依赖关系 — TaskManager 最复杂的方法
+     *
+     * 可更新内容:
+     *   - status: pending → in_progress → completed / deleted
+     *   - addBlockedBy: 添加上游依赖 (本任务被谁阻塞)
+     *   - addBlocks: 添加下游依赖 (本任务阻塞了谁)
+     *
      * 特殊逻辑:
-     *   - 设为 completed 时, 自动从其他任务的 blockedBy 中移除本任务 (解锁下游)
-     *   - 设为 deleted 时, 删除文件并记录审计日志
-     *   - addBlockedBy/addBlocks 与现有值合并去重
+     *
+     *   completed 时 — 解锁下游:
+     *     遍历所有任务, 将本任务从其他任务的 blockedBy 中移除
+     *     例: 任务 A blockedBy: [B], B 完成后 → A blockedBy: [] (可开始)
+     *
+     *   deleted 时 — 物理删除:
+     *     删除 .tasks/task_{tid}.json 文件, 不再出现在 listAll 中
+     *     但审计日志保留 (可追溯)
+     *
+     *   addBlockedBy / addBlocks — 合并去重:
+     *     与现有值合并, Set 去重, 不会重复添加
+     *
+     * @param tid          任务 ID
+     * @param status       新状态 (null 则不更新)
+     * @param addBlockedBy 要添加的上游依赖 ID 数组
+     * @param addBlocks    要添加的下游依赖 ID 数组
+     * @param actor        操作者
+     * @returns            更新后的任务 JSON 字符串
      */
     update(tid: string | number, status: string | null = null, addBlockedBy: number[] | null = null, addBlocks: number[] | null = null, actor: string = 'agent'): string {
         const task = this._load(tid);
+
         if (status) {
             task.status = status;
+
+            // completed → 解锁下游: 从所有任务的 blockedBy 中移除本任务
             if (status === 'completed') {
                 const files = fs.readdirSync(TASKS_DIR).filter(f => f.startsWith('task_') && f.endsWith('.json'));
                 for (const file of files) {
@@ -239,23 +352,49 @@ export class TaskManager {
                     }
                 }
             }
+
+            // deleted → 物理删除文件 (审计日志保留)
             if (status === 'deleted') {
                 const p = path.join(TASKS_DIR, `task_${tid}.json`);
                 if (fs.existsSync(p)) fs.unlinkSync(p);
                 this._audit('delete', Number(tid), actor);
                 return `Task ${tid} deleted`;
             }
+
             this._audit('update', Number(tid), actor, { status });
         }
+
+        // 依赖关系: 合并去重
         if (addBlockedBy) task.blockedBy = [...new Set([...task.blockedBy, ...addBlockedBy])];
         if (addBlocks) task.blocks = [...new Set([...task.blocks, ...addBlocks])];
+
         this._save(task);
+
         if (addBlockedBy || addBlocks) {
             this._audit('update', Number(tid), actor, { addBlockedBy, addBlocks });
         }
+
         return JSON.stringify(task, null, 2);
     }
 
+    /**
+     * 列出所有任务 — 文本格式, 供 LLM 阅读
+     *
+     * 输出格式:
+     *   [ ] #1: 任务主题
+     *   [>] #2: 任务主题 @ws-engineer (blocked by: [1])
+     *   [x] #3: 任务主题
+     *   [!] #4: 过期任务
+     *
+     * 状态标记:
+     *   [ ] pending — 待办
+     *   [>] in_progress — 进行中
+     *   [x] completed — 已完成
+     *   [!] expired — 已过期
+     *   [?] unknown — 未知状态
+     *
+     * @returns 格式化的任务列表文本
+     */
     listAll(): string {
         const files = fs.readdirSync(TASKS_DIR).filter(f => f.startsWith('task_') && f.endsWith('.json')).sort();
         if (!files.length) return 'No tasks.';
@@ -271,8 +410,16 @@ export class TaskManager {
     }
 
     /**
-     * 列出所有任务 (结构化) — 供 /api/state 返回给前端
-     * 支持按 status / owner / keyword 过滤
+     * 列出所有任务 — 结构化数据, 供 /api/state 返回给前端
+     *
+     * 与 listAll() 的区别:
+     *   - listAll(): 返回文本字符串, 供 LLM 阅读
+     *   - listAllStructured(): 返回结构化数组, 供前端 React 组件渲染
+     *
+     * 支持过滤:
+     *   - status: 精确匹配 (如 'pending')
+     *   - owner: 大小写不敏感匹配 (如 'ws-engineer')
+     *   - keyword: 在 subject + description 中模糊搜索
      */
     listAllStructured(filter?: TaskFilter): Array<{ id: number; subject: string; description: string; status: string; owner: string | null; blockedBy: number[]; blocks: number[] }> {
         const files = fs.readdirSync(TASKS_DIR).filter(f => f.startsWith('task_') && f.endsWith('.json')).sort();
@@ -282,13 +429,16 @@ export class TaskManager {
         });
 
         if (filter) {
+            // 按状态精确匹配
             if (filter.status) {
                 tasks = tasks.filter(t => t.status === filter.status);
             }
+            // 按负责人大小写不敏感匹配
             if (filter.owner) {
                 const ownerLower = filter.owner.toLowerCase();
                 tasks = tasks.filter(t => t.owner && t.owner.toLowerCase() === ownerLower);
             }
+            // 按关键词模糊搜索 (subject + description)
             if (filter.keyword) {
                 const kw = filter.keyword.toLowerCase();
                 tasks = tasks.filter(t =>
@@ -301,6 +451,23 @@ export class TaskManager {
         return tasks;
     }
 
+    /**
+     * 认领任务 — 将任务分配给指定成员并设为 in_progress
+     *
+     * 典型场景:
+     *   主 Agent 创建任务后, 调用 claim() 分配给子 Agent
+     *   或子 Agent 完成任务后, 主 Agent claim() 下一个任务
+     *
+     * 流程:
+     *   1. 加载任务
+     *   2. 设置 owner + status = in_progress
+     *   3. 保存 + 审计
+     *
+     * @param tid    任务 ID
+     * @param owner  认领者名称 (如 'ws-engineer')
+     * @param actor  操作者
+     * @returns      确认消息
+     */
     claim(tid: string | number, owner: string, actor: string = 'agent'): string {
         const task = this._load(tid);
         task.owner = owner;
@@ -489,26 +656,68 @@ export class CronManager {
  * 加载时机: 进程启动时一次性扫描 skills/ 目录, 运行时不重新加载
  */
 export class SkillLoader {
+    /** 已加载的技能 { 技能名 → { meta: YAML 元信息, body: Markdown 正文 } } */
     public skills: Record<string, { meta: any; body: string }> = {};
 
+    /**
+     * 构造函数 — 进程启动时一次性扫描 skills/ 目录
+     * 运行时不重新加载 (技能文件是静态知识, 不会动态变化)
+     */
     constructor(skillsDir: string) {
         this._loadSkills(skillsDir);
     }
 
+    /**
+     * 扫描 skills/ 目录并加载所有 SKILL.md 文件
+     *
+     * 目录约定:
+     *   skills/
+     *   ├── frontend-design/
+     *   │   └── SKILL.md        ← 子目录名即技能名 (除非 YAML 中指定了 name)
+     *   ├── data-pipeline/
+     *   │   └── SKILL.md
+     *   └── ...
+     *
+     * 文件格式 (YAML frontmatter + Markdown 正文):
+     *   ---
+     *   name: my-skill           ← 可选, 不写则用目录名
+     *   description: 一行描述    ← 可选, 供 descriptions() 展示
+     *   ---
+     *   # 技能正文
+     *   这里是 Markdown 内容...
+     *
+     * 解析流程:
+     *   1. 列出 skillsDir 下的所有子目录
+     *   2. 筛选出包含 SKILL.md 的子目录
+     *   3. 逐个读取: 用正则分离 frontmatter 和 body
+     *   4. 手动解析 frontmatter (逐行按冒号分割, 不依赖 YAML 库)
+     *   5. 技能名优先取 meta.name, 否则用目录名
+     */
     private _loadSkills(skillsDir: string) {
+        // skillsDir 不存在时静默返回 (项目可能没有自定义技能)
         if (!fs.existsSync(skillsDir)) return;
+
+        // Step 1: 列出所有子目录
         const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+
+        // Step 2: 筛选包含 SKILL.md 的子目录 → 得到文件路径数组
         const skillFiles = entries.filter(e => e.isDirectory())
              .map(e => path.join(skillsDir, e.name, 'SKILL.md'))
              .filter(p => fs.existsSync(p));
 
+        // Step 3: 逐个解析
         for (const file of skillFiles.sort()) {
             const text = fs.readFileSync(file, 'utf8');
+
+            // Step 4: 用正则分离 YAML frontmatter 和 Markdown 正文
+            // 匹配: ---\n{frontmatter}\n---\n{body}
             const match = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
             let meta: any = {};
-            let body = text;
+            let body = text;  // 默认: 整个文件作为 body (无 frontmatter 时)
 
             if (match) {
+                // 手动解析 frontmatter — 逐行按首个冒号分割
+                // 为什么不用 YAML 库? 减少依赖, 且 frontmatter 格式简单 (key: value)
                 const frontmatter = match[1];
                 for (const line of frontmatter.trim().split('\n')) {
                     const colonIdx = line.indexOf(':');
@@ -521,11 +730,24 @@ export class SkillLoader {
                 body = match[2].trim();
             }
 
+            // Step 5: 技能名 — 优先取 YAML 中的 name, 否则用父目录名
+            // 例: skills/frontend-design/SKILL.md → name = meta.name || 'frontend-design'
             const name = meta.name || path.basename(path.dirname(file));
             this.skills[name] = { meta, body };
         }
     }
 
+    /**
+     * 生成技能描述列表 — 供 LLM 查看有哪些技能可用
+     *
+     * 输出格式:
+     *   (no skills)                           ← 无技能时
+     *   或
+     *   - frontend-design: 前端设计指导       ← 有技能时
+     *   - data-pipeline: 数据管道设计
+     *
+     * 调用时机: Agent 系统提示词中可能引用, 或 LLM 调用 load_skill 前参考
+     */
     descriptions(): string {
         if (!Object.keys(this.skills).length) return '(no skills)';
         return Object.entries(this.skills)
@@ -533,6 +755,21 @@ export class SkillLoader {
             .join('\n');
     }
 
+    /**
+     * 加载指定技能 — 返回 <skill> 标签包裹的 Markdown 正文
+     *
+     * LLM 调用 load_skill(name) 时触发:
+     *   1. 在 this.skills 中查找
+     *   2. 找到 → 返回 <skill name="xxx">正文</skill>
+     *   3. 未找到 → 返回错误提示 + 可用技能列表 (帮助 LLM 自行修正)
+     *
+     * 为什么用 <skill> 标签包裹?
+     *   - 与普通对话内容区分开, LLM 能识别这是"参考资料"而非"用户消息"
+     *   - 类似 XML 的结构化标签是 LLM 熟悉的格式
+     *
+     * @param name  技能名 (对应 YAML 中的 name 或目录名)
+     * @returns     <skill> 标签包裹的正文, 或错误提示
+     */
     load(name: string): string {
         const skill = this.skills[name];
         if (!skill) {
@@ -577,34 +814,65 @@ export class MessageBus {
             return msgs;
         } catch { return []; }
     }
+
+    /**
+     * 向指定成员收件箱写入消息 — 追加到 .team/inbox/{name}.jsonl
+     * 每行一个 JSON 对象, 格式: { from, content, timestamp }
+     *
+     * 与 readInbox 的破坏性读取配对使用:
+     *   sendInbox('tester', 'agent', '开始测试') → 写入 tester.jsonl
+     *   readInbox('tester')                       → 读取并清空 tester.jsonl
+     *
+     * @param to      收件人名称 (对应 .team/inbox/{to}.jsonl)
+     * @param from    发件人名称
+     * @param content 消息内容
+     * @returns       确认消息
+     */
+    sendInbox(to: string, from: string, content: string): string {
+        const inboxPath = path.join(INBOX_DIR, `${to}.jsonl`);
+        const msg = JSON.stringify({ from, content, timestamp: new Date().toISOString() });
+        fs.appendFileSync(inboxPath, msg + '\n', 'utf8');
+
+        // 唤醒目标子 Agent — 让它立即处理新消息, 无需等待 5s 轮询
+        // TEAM_MGR 在文件末尾初始化, 运行时一定已就绪
+        try { TEAM_MGR.wakeRunner(to); } catch { /* 目标不是子 Agent, 忽略 */ }
+
+        return `Message sent to '${to}'`;
+    }
 }
 
 /**
- * TeammateManager — 团队成员管理
+ * TeammateManager — 团队成员管理 + SubAgent 生命周期
  *
  * 存储: .team/config.json (JSON 配置文件)
  * 成员状态: working(执行中) / idle(空闲)
  *
  * 生命周期:
- *   spawn(name, role) → 注册成员 + 设为 working
- *   setStatus(name, 'idle') → 标记为空闲
+ *   spawn(name, role) → 注册成员 + 设为 working + 启动 SubAgentRunner
+ *   setStatus(name, 'idle') → 标记为空闲 + 停止 SubAgentRunner
+ *   wakeRunner(name) → 唤醒子 Agent 轮询 (收到新消息时)
  *
  * 与子 Agent 的协作流程:
- *   1. 主 Agent 调用 spawn() 注册子 Agent
- *   2. 子 Agent 通过 MessageBus 收发消息
- *   3. 任务完成后 setStatus('idle')
+ *   1. 主 Agent 调用 spawn() → 注册 + 启动后台 LLM 循环
+ *   2. 主 Agent 调用 send_message() → 写入 inbox + 唤醒子 Agent
+ *   3. 子 Agent 收到消息 → 运行 agent loop → 结果发回主 Agent inbox
+ *   4. 主 Agent 调用 read_inbox() → 读取子 Agent 的回复
+ *   5. 主 Agent 调用 setStatus('idle') → 终止子 Agent 循环
  */
 export class TeammateManager {
     public configPath: string;
+    /** 活跃的子 Agent 运行器 — 按成员名索引 */
+    private runners: Map<string, any>;  // any: 避免循环导入 SubAgentRunner 类型
 
     constructor() {
         mkdirSync(TEAM_DIR);
         this.configPath = path.join(TEAM_DIR, 'config.json');
+        this.runners = new Map();
         if (!fs.existsSync(this.configPath)) {
             this._save({ team_name: 'default', members: [] });
         }
     }
-    
+
     _load() {
         if (fs.existsSync(this.configPath)) {
             try {
@@ -615,20 +883,30 @@ export class TeammateManager {
         }
         return { team_name: 'default', members: [] };
     }
-    
+
     _save(data: any) {
         fs.writeFileSync(this.configPath, JSON.stringify(data, null, 2), 'utf8');
     }
-    
+
     listAll(): any[] {
         const config = this._load();
         return config.members || [];
     }
-    
+
     /**
-     * 派生/唤醒子 Agent — 注册成员并设为 working 状态
-     * 若成员已存在则更新 role 并唤醒, 否则新建
-     * 存储: .team/config.json
+     * 派生/唤醒子 Agent — 注册成员 + 启动 SubAgentRunner 后台循环
+     *
+     * 若成员已存在: 更新 role 并重新启动 runner
+     * 若成员不存在: 新建并启动 runner
+     *
+     * SubAgentRunner 以非阻塞方式运行, 内部会:
+     *   - 轮询 inbox (5s 间隔 + 即时唤醒)
+     *   - 收到消息后运行独立的 LLM agent loop
+     *   - 结果通过 MessageBus 发回主 Agent
+     *   - 空闲 60s 后自动停止
+     *
+     * @param name 子 Agent 名称 (唯一标识)
+     * @param role 角色描述 (注入 system prompt)
      */
     spawn(name: string, role: string) {
         const config = this._load();
@@ -640,11 +918,24 @@ export class TeammateManager {
             config.members.push({ name, role, status: 'working' });
         }
         this._save(config);
-        return `Spawned/woke '${name}' (role: ${role})`;
+
+        // 停止旧 runner (如果存在)
+        if (this.runners.has(name)) {
+            this.runners.get(name).stop();
+        }
+
+        // 启动新 SubAgentRunner (延迟导入避免循环依赖)
+        const { SubAgentRunner } = require('./subagent');
+        const runner = new SubAgentRunner(name, role);
+        this.runners.set(name, runner);
+        runner.start();
+
+        return `Spawned '${name}' (role: ${role}), sub-agent loop started`;
     }
-    
+
     /**
      * 更新子 Agent 状态 — 如 'working' → 'idle'
+     * 若设为 idle, 同时停止对应的 SubAgentRunner
      * 静默失败: 成员不存在时不报错
      */
     setStatus(name: string, status: string) {
@@ -653,6 +944,22 @@ export class TeammateManager {
         if (member) {
             member.status = status;
             this._save(config);
+        }
+
+        // 停止 SubAgentRunner
+        if (status === 'idle' && this.runners.has(name)) {
+            this.runners.get(name).stop();
+            this.runners.delete(name);
+        }
+    }
+
+    /**
+     * 唤醒子 Agent — 当有新消息到达其 inbox 时调用
+     * 子 Agent 的轮询会立即被唤醒, 无需等待 5s 间隔
+     */
+    wakeRunner(name: string) {
+        if (this.runners.has(name)) {
+            this.runners.get(name).wake();
         }
     }
 }
@@ -877,9 +1184,22 @@ export class SessionManager {
 // ═══════════════════════════════════════════════════════════════
 // 单例注册 — globalForAgent 模式确保 HMR 安全
 // ═══════════════════════════════════════════════════════════════
-// Next.js 开发模式下 HMR 会重新执行模块代码, 如果直接 new XXX()
-// 每次 HMR 都会创建新实例, 丢失内存状态 (如 BackgroundManager 的任务列表)
-// 解决: 将实例挂在 global 对象上, HMR 时优先复用已有实例
+//
+// globalForAgent 是一个类型断言技巧: 把 Node.js 的 global 对象"伪装"成
+// 强类型的 Manager 容器, 解决两个问题:
+//
+//   问题 1 — TypeScript 类型:
+//     global.TODO = new TodoManager()  // ❌ TS 报错: 属性 TODO 不存在于 Global
+//     globalForAgent.TODO = new TodoManager()  // ✅ 断言后类型安全
+//
+//   问题 2 — Next.js HMR:
+//     export const TODO = new TodoManager()  // ❌ 每次 HMR 都 new, 内存状态丢失
+//     export const TODO = globalForAgent.TODO || new TodoManager()  // ✅ 首次 new, 之后复用
+//
+//   global 对象在 Node.js 进程中始终存在且不会被 HMR 重置,
+//   所以它天然适合作为跨 HMR 的单例存储
+//
+//   简单说: globalForAgent = HMR 安全的单例存储 + TypeScript 类型体操
 
 const globalForAgent = global as unknown as {
     TODO: TodoManager;

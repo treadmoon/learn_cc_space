@@ -12,7 +12,8 @@
 import { NextRequest } from 'next/server';
 import OpenAI from 'openai';
 import { runBash, runRead, runWrite, runEdit } from '@/lib/agent/tools';
-import { TASK_MGR, TODO, BG_MGR, CRON_MGR, SKILLS, ARTIFACT_MGR, KNOWLEDGE_MGR, MCP_MGR, microCompact } from '@/lib/agent/managers';
+import { TASK_MGR, TODO, BG_MGR, CRON_MGR, SKILLS, ARTIFACT_MGR, KNOWLEDGE_MGR, MCP_MGR, microCompact, BUS, TEAM_MGR } from '@/lib/agent/managers';
+import { client, MODEL } from '@/lib/agent/llm-client';
 
 export const runtime = 'nodejs';
 
@@ -95,15 +96,11 @@ function compressMessages(msgs: any[]): string {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * OpenAI SDK 客户端 — 使用 OpenAI 兼容接口
+ * OpenAI SDK 客户端和 MODEL — 从 llm-client.ts 导入, 与 subagent.ts 共享
  * 支持 Anthropic Claude / 火山引擎 Ark 等第三方服务
  * baseURL 和 apiKey 从环境变量读取
  */
-const client = new OpenAI({
-    baseURL: process.env.ANTHROPIC_BASE_URL,
-    apiKey: process.env.ANTHROPIC_API_KEY || 'sk-none',
-});
-const MODEL = process.env.MODEL_ID || 'claude-3-5-sonnet-20241022';
+// client, MODEL → imported from '@/lib/agent/llm-client'
 
 // ═══════════════════════════════════════════════════════════════
 // 工具定义 (19 个)
@@ -146,6 +143,12 @@ const TOOLS = [
     // ── 定时调度工具 ──
     { type: 'function' as const, function: { name: 'cron_schedule', description: 'Schedule a background command to run periodically.', parameters: { type: 'object', properties: { name: { type: 'string' }, command: { type: 'string' }, interval_ms: { type: 'integer' } }, required: ['name', 'command', 'interval_ms'] } } },
     { type: 'function' as const, function: { name: 'cron_remove', description: 'Remove a scheduled background command.', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+    // ── 团队协作工具 ──
+    { type: 'function' as const, function: { name: 'spawn_teammate', description: 'Create or wake a sub-agent teammate with a name and role.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Unique teammate name' }, role: { type: 'string', description: 'Role description for the teammate' } }, required: ['name', 'role'] } } },
+    { type: 'function' as const, function: { name: 'list_teammates', description: 'List all teammates and their current status.', parameters: { type: 'object', properties: {} } } },
+    { type: 'function' as const, function: { name: 'set_teammate_status', description: 'Update a teammate\'s status (e.g. working, idle).', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Teammate name' }, status: { type: 'string', description: 'New status value' } }, required: ['name', 'status'] } } },
+    { type: 'function' as const, function: { name: 'send_message', description: 'Send a message to a teammate\'s inbox.', parameters: { type: 'object', properties: { to: { type: 'string', description: 'Recipient teammate name' }, content: { type: 'string', description: 'Message content' } }, required: ['to', 'content'] } } },
+    { type: 'function' as const, function: { name: 'read_inbox', description: 'Read and clear your inbox messages (destructive read).', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Teammate name whose inbox to read' } }, required: ['name'] } } },
     // ── 制品工具 ──
     { type: 'function' as const, function: { name: 'artifact_save', description: 'Save a file as a task artifact to .artifacts/ directory.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path to save as artifact' }, task_id: { type: 'integer', description: 'Associated task ID (optional, saves to shared/ if omitted)' }, description: { type: 'string', description: 'Brief description of the artifact' } }, required: ['path'] } } },
     // ── RAG 知识库工具 ──
@@ -336,6 +339,13 @@ function createToolHandlers(messages: any[], reqId: string): Record<string, Func
         // ── 定时调度 ──
         cron_schedule: (kw: any) => CRON_MGR.schedule(kw.name, kw.command, kw.interval_ms),
         cron_remove:   (kw: any) => CRON_MGR.remove(kw.name),
+
+        // ── 团队协作 ──
+        spawn_teammate:      (kw: any) => TEAM_MGR.spawn(kw.name, kw.role),
+        list_teammates:      () => TEAM_MGR.listAll(),
+        set_teammate_status: (kw: any) => { TEAM_MGR.setStatus(kw.name, kw.status); return `Status of '${kw.name}' set to '${kw.status}'`; },
+        send_message:        (kw: any) => BUS.sendInbox(kw.to, 'agent', kw.content),
+        read_inbox:          (kw: any) => BUS.readInbox(kw.name),
 
         // ── 制品 ──
         artifact_save: (kw: any) => ARTIFACT_MGR.save(kw.path, kw.task_id, kw.description),

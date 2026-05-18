@@ -443,6 +443,171 @@ if (process.env.NODE_ENV !== 'production') {
 - 旧结果替换为 `[Previous: used {toolName}]`
 - `read_file` 结果永不压缩
 
+### TaskManager: 存储与审计
+
+TaskManager 是最复杂的 Manager, 提供跨会话的持久化任务管理, 支持依赖关系和审计追踪。
+
+#### 存储结构
+
+```
+.tasks/
+├── task_1.json          # 任务 1
+├── task_2.json          # 任务 2
+├── task_3.json          # 任务 3
+└── audit.jsonl          # 审计日志 (所有任务共享)
+```
+
+每个任务是一个独立的 JSON 文件, 文件名即 ID (`task_{id}.json`)。
+ID 自增: 扫描目录中已有文件取最大值 +1, 无需额外的计数器文件。
+
+#### 任务数据结构
+
+```json
+// .tasks/task_1.json
+{
+    "id": 1,
+    "subject": "实现 WebSocket 推送",
+    "description": "为 Agent 添加实时状态推送能力",
+    "status": "pending",
+    "owner": null,
+    "blockedBy": [2],
+    "blocks": [3, 4]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | number | 自增 ID, 文件名决定 |
+| `subject` | string | 任务主题 (必填, 简短) |
+| `description` | string | 任务详情 (可选) |
+| `status` | string | pending → in_progress → completed / deleted |
+| `owner` | string/null | 认领者 (子 Agent 名称, 如 'ws-engineer') |
+| `blockedBy` | number[] | 上游依赖: 这些任务完成后才能开始本任务 |
+| `blocks` | number[] | 下游依赖: 本任务完成后解锁这些任务 |
+
+#### 状态机
+
+```
+                    ┌──────────┐
+                    │ pending  │ ← 初始状态
+                    └────┬─────┘
+                         │ claim()
+                         ▼
+                   ┌─────────────┐
+                   │ in_progress │
+                   └──┬──────┬───┘
+                      │      │
+            update()  │      │  update()
+                      ▼      ▼
+              ┌──────────┐  ┌─────────┐
+              │completed │  │ deleted │ ← 物理删除文件
+              └──────────┘  └─────────┘
+```
+
+#### 依赖关系: blockedBy / blocks
+
+依赖关系是双向的, 但从语义上理解只需关注一个方向:
+
+```
+任务 A: blocks: [B, C]      ← A 完成后解锁 B 和 C
+任务 B: blockedBy: [A]      ← B 需要等 A 完成才能开始
+任务 C: blockedBy: [A]      ← C 需要等 A 完成才能开始
+```
+
+**completed 时的自动解锁:**
+
+当任务 A 被标记为 completed 时, TaskManager 遍历所有任务文件:
+```
+for each task in .tasks/:
+    if task.blockedBy contains A.id:
+        task.blockedBy.remove(A.id)   ← 自动解锁
+        save(task)
+```
+
+这确保下游任务的 blockedBy 在上游完成后自动清空, 无需手动维护。
+
+#### 审计日志
+
+审计日志 `.tasks/audit.jsonl` 是追加写入的 JSONL 文件, 每行一个 JSON 记录:
+
+```jsonl
+{"ts":"2026-05-15T10:00:00Z","action":"create","taskId":1,"actor":"agent","details":{"subject":"实现 WebSocket"}}
+{"ts":"2026-05-15T10:01:00Z","action":"claim","taskId":1,"actor":"agent","details":{"owner":"ws-engineer"}}
+{"ts":"2026-05-15T10:05:00Z","action":"update","taskId":1,"actor":"ws-engineer","details":{"status":"in_progress"}}
+{"ts":"2026-05-15T10:10:00Z","action":"update","taskId":1,"actor":"ws-engineer","details":{"addBlockedBy":[2]}}
+{"ts":"2026-05-15T10:30:00Z","action":"update","taskId":1,"actor":"agent","details":{"status":"completed"}}
+{"ts":"2026-05-15T10:31:00Z","action":"delete","taskId":2,"actor":"agent","details":{}}
+```
+
+| action | 触发时机 | 写入内容 |
+|--------|---------|---------|
+| `create` | `create()` | subject + 自定义 meta (如 reqId) |
+| `claim` | `claim()` | owner 名称 |
+| `update` | `update()` | status 变更 或 addBlockedBy/addBlocks 变更 |
+| `delete` | `update(status='deleted')` | 仅 taskId (文件已物理删除) |
+
+**审计日志的特性:**
+- 追加写入 (appendFileSync), 永不覆盖
+- 即使任务被 delete, 审计记录仍然保留 (可追溯)
+- 供前端 RightPanel "审计日志" 区域展示 (通过 /api/state 的 auditLog 字段)
+
+#### CRUD 操作流程
+
+**Create — 创建任务:**
+```
+LLM 调用 task_create(subject, description)
+  → TaskManager.create()
+  → _nextId() 扫描目录取最大 ID +1
+  → _save() 写入 .tasks/task_{id}.json
+  → _audit('create') 追加审计记录
+  → 返回 JSON 字符串
+```
+
+**Read — 读取任务:**
+```
+LLM 调用 task_get(task_id)
+  → TaskManager.get(tid)
+  → _load() 读取 .tasks/task_{tid}.json
+  → 返回 JSON 字符串
+
+前端轮询 /api/state
+  → TaskManager.listAllStructured(filter)
+  → 读取所有 task_*.json → 过滤 → 返回结构化数组
+```
+
+**Update — 更新任务:**
+```
+LLM 调用 task_update(task_id, status, add_blocked_by, add_blocks)
+  → TaskManager.update()
+  → _load() 读取现有任务
+  → 更新 status / 合并依赖 (Set 去重)
+  → 若 status='completed': 遍历所有任务, 从 blockedBy 中移除本任务
+  → 若 status='deleted': 物理删除文件, 记录审计, 提前返回
+  → _save() 写回文件
+  → _audit('update') 追加审计记录
+  → 返回 JSON 字符串
+```
+
+**Claim — 认领任务:**
+```
+主 Agent 调用 task_update(task_id) 或 TaskManager.claim(tid, owner)
+  → 设置 owner + status = 'in_progress'
+  → _save() + _audit('claim')
+  → 返回确认消息
+```
+
+#### 与 TodoManager 的对比
+
+| 维度 | TodoManager | TaskManager |
+|------|-------------|-------------|
+| 生命周期 | 会话级 (切换会话后清空) | 跨会话 (文件持久化) |
+| 存储 | `.todos.json` (单文件全量) | `.tasks/task_{id}.json` (多文件独立) |
+| ID | 无 ID (全量替换) | 自增 ID (文件名) |
+| 依赖关系 | 无 | blockedBy / blocks |
+| 审计 | 无 | audit.jsonl (追加写入) |
+| 更新方式 | 全量覆盖 | 增量更新 (单字段) |
+| 使用场景 | 轻量任务清单 (20 项内) | 复杂任务编排 (依赖/分配/追踪) |
+
 ---
 
 ## 7. RAG 知识召回管道
@@ -735,18 +900,15 @@ interface TeamConfig {
 { "from": "researcher", "to": "coder", "content": "...", "ts": "..." }
 ```
 
-### 9.4 当前状态与扩展
+### 9.4 当前状态
 
 当前团队协作系统已实现:
-- ✅ TeammateManager 单例注册
-- ✅ MessageBus 基础设施
+- ✅ TeammateManager 单例注册 + SubAgentRunner 生命周期管理
+- ✅ MessageBus 基础设施 (sendInbox + readInbox + 即时唤醒)
+- ✅ 5 个 LLM 工具注册 (spawn_teammate / list_teammates / set_teammate_status / send_message / read_inbox)
+- ✅ SubAgentRunner 独立执行引擎 (后台 LLM 循环)
 - ✅ UI 展示 (RightPanel 成员列表 + 状态指示器)
 - ✅ /api/state 暴露 teammates 数据
-
-待扩展 (工具未接线):
-- ⬜ `team_spawn` 工具 — Agent 通过工具调用创建子 Agent
-- ⬜ `team_message` 工具 — Agent 间发送消息
-- ⬜ `team_read_inbox` 工具 — 读取收件箱消息
 
 ---
 
@@ -754,67 +916,192 @@ interface TeamConfig {
 
 ### 10.1 概述
 
-子任务系统基于 TeammateManager + MessageBus 构建, 实现主 Agent 派生子 Agent 执行专项任务的模式。
+子任务系统让主 Agent 可以派生子 Agent 执行独立任务。每个子 Agent 拥有独立的 LLM 上下文、工具集和后台执行循环, 通过 MessageBus 与主 Agent 通信。
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                   主 Agent (Lead)                         │
+│                   主 Agent (route.ts)                      │
 │                                                          │
 │  1. 分析任务 → 拆解为子任务                               │
-│  2. team_spawn("researcher", "搜索相关文档")              │
-│  3. team_spawn("coder", "实现核心逻辑")                   │
+│  2. spawn_teammate("researcher", "搜索相关文档")          │
+│  3. send_message({to:"researcher", content:"搜索..."})   │
 │  4. 继续处理其他工作...                                   │
-│  5. team_read_inbox() → 收集子 Agent 结果                 │
+│  5. read_inbox({name:"agent"}) → 收集子 Agent 结果       │
 │  6. 综合结果 → 生成最终回复                               │
 └──────────────────────────────────────────────────────────┘
         │                    │
         ▼                    ▼
 ┌──────────────┐    ┌──────────────┐
-│  子 Agent 1   │    │  子 Agent 2   │
+│  SubAgentRunner│    │ SubAgentRunner│
 │  researcher   │    │  coder        │
 │              │    │              │
+│ · 独立 LLM   │    │ · 独立 LLM   │
 │ · 独立上下文  │    │ · 独立上下文  │
-│ · 专用工具集  │    │ · 专用工具集  │
-│ · 结果写入    │    │ · 结果写入    │
-│   inbox      │    │   inbox      │
+│ · 全量工具集  │    │ · 全量工具集  │
+│ · 后台循环    │    │ · 后台循环    │
 └──────────────┘    └──────────────┘
 ```
 
-### 10.2 数据流
+### 10.2 文件结构
+
+| 文件 | 职责 |
+|------|------|
+| `src/lib/agent/subagent.ts` | SubAgentRunner 类 + runAgentLoop() |
+| `src/lib/agent/llm-client.ts` | OpenAI client 单例 (共享) |
+| `src/lib/agent/managers.ts` | TeammateManager (生命周期) + MessageBus (通信) |
+| `src/app/api/chat/route.ts` | 5 个 LLM 工具注册 |
+
+### 10.3 执行引擎: runAgentLoop()
+
+从 route.ts 提取的可复用 Agent 循环, 供主 Agent 和子 Agent 共享:
+
+```typescript
+// src/lib/agent/subagent.ts
+export async function runAgentLoop(params: {
+    messages: any[];          // 初始消息 (原地修改)
+    systemPrompt: string;     // 系统提示词
+    tools: any[];             // 可用工具
+    toolHandlers: Record<string, Function>;  // 工具处理器
+    maxLoops?: number;        // 最大循环次数 (默认 10)
+    onLog?: (msg: string) => void;          // 日志回调
+}): Promise<any[]>
+```
+
+循环逻辑 (与 route.ts 主循环相同):
+```
+for (loop 0..maxLoops):
+    1. microCompact(messages) — 压缩旧工具结果
+    2. LLM call (client.chat.completions.create)
+    3. push assistant message
+    4. if finish_reason !== 'tool_calls' → break
+    5. 执行 tool_calls → push tool results
+return messages
+```
+
+### 10.4 SubAgentRunner 生命周期
+
+```typescript
+// src/lib/agent/subagent.ts
+export class SubAgentRunner {
+    constructor(name: string, role: string)
+    start(): void    // 启动后台循环 (非阻塞)
+    stop(): void     // 停止循环
+    wake(): void     // 唤醒轮询 (即时响应)
+}
+```
+
+内部循环 (`_loop()`):
+```
+while (running):
+    1. 检查 TeammateManager 中 status, 如果 'idle' → 退出
+    2. BUS.readInbox(name) — 破坏性读取收件箱
+    3. 有消息 → 构建 messages → runAgentLoop() → 结果发回主 Agent
+    4. 无消息 → 等待 wake() 或 5s 超时后再次轮询
+    5. 连续 60s 无消息 → 自动 setStatus('idle') 并退出
+```
+
+### 10.5 完整数据流
 
 ```
-主 Agent 调用 team_spawn(name, role)
+主 Agent 调用 spawn_teammate("tester", "测试工程师")
     │
-    ├── TeammateManager.spawn() → 注册成员, status: 'working'
+    ├── TeammateManager.spawn()
+    │     ├── 写入 .team/config.json {name, role, status:'working'}
+    │     ├── new SubAgentRunner("tester", "测试工程师")
+    │     └── runner.start() → 启动后台 _loop()
     │
-    ├── 启动独立 Agent 会话 (独立 messages 上下文)
+    ▼
+主 Agent 调用 send_message({to:"tester", content:"测试登录模块"})
     │
-    └── 子 Agent 执行任务
-          │
-          ├── 使用工具 (bash, file, knowledge 等)
-          │
-          ├── 完成后写入结果到 .team/inbox/{name}.jsonl
-          │
-          └── TeammateManager.setStatus(name, 'idle')
-                │
-                ▼
-主 Agent 调用 team_read_inbox()
+    ├── MessageBus.sendInbox()
+    │     ├── 写入 .team/inbox/tester.jsonl
+    │     └── TEAM_MGR.wakeRunner("tester") → 即时唤醒
     │
-    ├── MessageBus.readInbox(name) → 读取并清空
+    ▼
+SubAgentRunner._loop() 被唤醒
     │
-    └── 将结果注入对话上下文 → 继续推理
+    ├── BUS.readInbox("tester") → 读取任务
+    ├── 构建 messages [{role:'user', content:'测试登录模块'}]
+    ├── runAgentLoop()
+    │     ├── system prompt (基于角色定制)
+    │     ├── LLM 调用 → 工具执行 → 结果注入 (最多 10 轮)
+    │     └── 提取最终 assistant 回复
+    │
+    ├── BUS.sendInbox("tester", "agent", "测试结果: ...")
+    │     └── 写入 .team/inbox/agent.jsonl
+    │
+    ▼
+主 Agent 调用 read_inbox({name:"agent"})
+    │
+    ├── MessageBus.readInbox("agent") → 读取并清空
+    └── 返回子 Agent 的执行结果
+
+主 Agent 调用 set_teammate_status({name:"tester", status:"idle"})
+    │
+    ├── TeammateManager.setStatus()
+    │     ├── 更新 .team/config.json → status:'idle'
+    │     └── runner.stop() → 终止后台循环
+    └── 子 Agent 生命周期结束
 ```
 
-### 10.3 与直接工具调用的区别
+### 10.6 LLM 工具注册
+
+route.ts 中注册的 5 个团队协作工具:
+
+| 工具 | 参数 | Handler |
+|------|------|---------|
+| `spawn_teammate` | `name`, `role` | `TEAM_MGR.spawn()` → 写 config + 启动 SubAgentRunner |
+| `list_teammates` | 无 | `TEAM_MGR.listAll()` → 返回成员列表 |
+| `set_teammate_status` | `name`, `status` | `TEAM_MGR.setStatus()` → 更新状态 + 停止 runner |
+| `send_message` | `to`, `content` | `BUS.sendInbox()` → 写 inbox + 唤醒 runner |
+| `read_inbox` | `name` | `BUS.readInbox()` → 破坏性读取收件箱 |
+
+### 10.7 子 Agent 工具集
+
+子 Agent 继承主 Agent 的全量工具, **排除团队协作工具** (防止递归创建子 Agent):
+
+| 类别 | 工具 |
+|------|------|
+| 文件系统 | `bash`, `read_file`, `write_file`, `edit_file` |
+| 待办 | `TodoWrite` |
+| 知识技能 | `load_skill` |
+| 后台任务 | `background_run`, `check_background` |
+| 持久化任务 | `task_create`, `task_get`, `task_update`, `task_list` |
+| 定时调度 | `cron_schedule`, `cron_remove` |
+| 制品 | `artifact_save` |
+| RAG 知识库 | `knowledge_ingest`, `knowledge_search` |
+
+### 10.8 与直接工具调用的区别
 
 | 维度 | 直接工具调用 | 子任务模式 |
 |------|------------|-----------|
 | 上下文 | 共享主 Agent 上下文 | 独立上下文, 不互相干扰 |
+| LLM 调用 | 主 Agent 的 LLM 循环 | 子 Agent 独立的 LLM 循环 |
 | 并行 | 串行执行 | 可并行执行多个子任务 |
 | 上下文窗口 | 占用主 Agent 窗口 | 独立窗口, 结果按需注入 |
+| 通信 | 直接返回 | MessageBus 异步消息 |
 | 适用场景 | 简单操作 | 复杂、独立、可并行的任务 |
 
-### 10.4 UI 表现
+### 10.9 通信机制: MessageBus
+
+```
+.team/inbox/
+├── agent.jsonl      # 主 Agent 收件箱 (子 Agent 的回复)
+├── tester.jsonl     # tester 收件箱 (主 Agent 的任务)
+└── researcher.jsonl # researcher 收件箱
+```
+
+消息格式 (每行一个 JSON):
+```json
+{"from":"agent","content":"测试登录模块","timestamp":"2026-05-18T10:00:00Z"}
+```
+
+关键特性:
+- **破坏性读取**: readInbox() 读取后清空文件 (fire-and-forget)
+- **即时唤醒**: sendInbox() 后自动调用 wakeRunner(), 无需等待 5s 轮询
+- **无重试**: 消息丢失不恢复 (适用于一次性任务结果传递)
+
+### 10.10 UI 表现
 
 子 Agent 在 RightPanel "在线协作智能体" 区域显示:
 
