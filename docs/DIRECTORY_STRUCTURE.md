@@ -141,7 +141,7 @@ src/lib/agent/
 | `tools.ts` | 文件系统工具实现: `runBash`(安全 shell)、`runRead`(读文件)、`runWrite`(原子写入)、`runEdit`(精确替换) |
 | `llm-client.ts` | OpenAI SDK 客户端单例 — `client` + `MODEL`, 供 route.ts 和 subagent.ts 共享 |
 | `managers.ts` | 12 个 Manager 单例 (Todo/Task/Background/Cron/Skill/MessageBus/Teammate/Worktree/Artifact/Session/Knowledge/MCP) + `microCompact()` 上下文压缩 |
-| `subagent.ts` | `runAgentLoop()` 可复用 Agent 循环 + `SubAgentRunner` 子 Agent 生命周期管理 (轮询 inbox → LLM 执行 → 回复) |
+| `subagent.ts` | `runAgentLoop()` 可复用 Agent 循环 + `SubAgentRunner` 子 Agent 生命周期管理 (轮询 inbox → LLM 执行 → 回复) + `TeammateRunner` 对等协作执行引擎 |
 | `knowledge.ts` | `KnowledgeManager` — 文本分块、Embedding API 调用、向量+BM25 混合检索 |
 | `mcp.ts` | `McpManager` — 读取 .mcp.json、懒连接 MCP Server、工具桥接 |
 
@@ -165,7 +165,7 @@ src/lib/agent/
 | `CronManager` | 内存 | 定时调度, setInterval → BG_MGR |
 | `SkillLoader` | `skills/` | 技能文件加载, SKILL.md 格式 |
 | `MessageBus` | `.team/inbox/` | 成员间消息, sendInbox + readInbox + 即时唤醒 |
-| `TeammateManager` | `.team/config.json` | 团队成员管理 + SubAgentRunner 生命周期 (spawn/wakeRunner/setStatus) |
+| `TeammateManager` | `.team/config.json` | 团队成员管理 + SubAgentRunner/TeammateRunner 生命周期 (spawn/createTeammate/wakeRunner/setStatus), 最多 10 人 |
 | `WorktreeManager` | 只读 (git) | Git worktree 列表 |
 | `ArtifactManager` | `.artifacts/` | 制品归档, 按任务分目录 |
 | `SessionManager` | `.sessions/` | 会话持久化, 完整 messages 存储 |

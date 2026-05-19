@@ -204,6 +204,7 @@ TeammateManager
 ├── setStatus(name, status)      → 更新状态 + 停止 runner
 ├── listAll()                    → 返回所有成员列表
 ├── wakeRunner(name)             → 唤醒子 Agent 轮询
+├── MAX_TEAM_SIZE = 10           → 最大团队成员数 (防止无限递归创建)
 └── runners: Map<string, SubAgentRunner|TeammateRunner>  → 存储活跃的运行器
 ```
 
@@ -223,16 +224,18 @@ TeammateManager
 **spawn() 做了什么?** (创建 SubAgent — 从属模式)
 
 1. 在 config.json 中注册成员, `type: 'subagent'`
-2. 停止同名旧 runner (如果存在)
-3. 创建新的 `SubAgentRunner` 实例
-4. 调用 `runner.start()` 启动后台循环 (非阻塞, 立即返回)
+2. 若团队已满 (≥10 人), 返回错误信息
+3. 停止同名旧 runner (如果存在)
+4. 创建新的 `SubAgentRunner` 实例
+5. 调用 `runner.start()` 启动后台循环 (非阻塞, 立即返回)
 
 **createTeammate() 做了什么?** (创建 Teammate — 对等模式)
 
 1. 在 config.json 中注册成员, `type: 'teammate'`
-2. 停止同名旧 runner (如果存在)
-3. 创建新的 `TeammateRunner` 实例 (继承 SubAgentRunner)
-4. 调用 `runner.start()` 启动后台循环 (非阻塞, 立即返回)
+2. 若团队已满 (≥10 人), 返回错误信息
+3. 停止同名旧 runner (如果存在)
+4. 创建新的 `TeammateRunner` 实例 (继承 SubAgentRunner)
+5. 调用 `runner.start()` 启动后台循环 (非阻塞, 立即返回)
 
 **setStatus() 做了什么?**
 
@@ -416,13 +419,13 @@ Teammate:  BUS.sendInbox(kw.to, this.name, content)    ← 发件人是自己 (�
 
 ```typescript
 async function runAgentLoop(params: {
-    messages: any[];              // 初始消息数组 (会被原地修改)
+    messages: any[];              // 初始消息数组 (不会被修改, 内部使用副本)
     systemPrompt: string;         // 系统提示词 (角色定义)
     tools: any[];                 // 可用工具列表
     toolHandlers: Record<string, Function>;  // 工具名 → 执行函数
     maxLoops?: number;            // 最大循环次数 (默认 10)
     onLog?: (msg: string) => void;          // 日志回调
-}): Promise<any[]>                // 返回最终的 messages 数组
+}): Promise<any[]>                // 返回最终的 messages 数组 (含 system prompt)
 ```
 
 **与主循环的区别:**
@@ -827,7 +830,7 @@ private _waitForWake(timeoutMs: number): Promise<void> {
             resolve();           // 超时 → 继续轮询
         }, timeoutMs);
 
-        // 保存 resolve 函数的引用, 让 wake() 可以调用它
+        // 覆盖 wakeResolve — 让 wake() 可以调用它
         this.wakeResolve = () => {
             clearTimeout(timer);  // 取消定时器
             this.wakeResolve = null;
@@ -999,34 +1002,19 @@ for (const msg of inbox) {
 ### 第一轮 LLM 调用
 
 ```typescript
-// 8.1 注入 system prompt (角色定义)
-messages.unshift({
-    role: 'system',
-    content: `You are a sub-agent named "tester" with the role: 读取并分析文件.
-
-You work as part of a team under the main agent's coordination.
-
-## Workflow
-1. You receive tasks as user messages
-2. You complete tasks using the available tools
-3. When done, provide a clear summary of what you accomplished
-
-## Guidelines
-- Focus on completing the assigned task efficiently
-- Use tools to read, write, and execute code as needed
-- Keep your final response concise but complete`
-});
+// 8.1 注入 system prompt — 创建新数组, 不修改调用方的 messages
+const workingMessages = [
+    { role: 'system', content: `You are a sub-agent named "tester"...` },
+    ...messages  // [{ role: 'user', content: '读取 package.json 并总结依赖数量' }]
+];
 
 // 8.2 微压缩 (新循环, 只有 2 条消息, 无需压缩)
-microCompact(messages); // → 0 (没有压缩)
+microCompact(workingMessages); // → 0 (没有压缩)
 
 // 8.3 LLM 调用
 resp = await client.chat.completions.create({
     model: MODEL,  // 与主 Agent 使用相同的模型
-    messages: [
-        { role: 'system', content: 'You are a sub-agent named "tester"...' },
-        { role: 'user', content: '读取 package.json 并总结依赖数量' }
-    ],
+    messages: workingMessages.map(m => ({ role: m.role, content: m.content, ... })),
     tools: SUB_AGENT_TOOLS,  // 16 个工具
     max_tokens: 4000
 });
@@ -1041,7 +1029,7 @@ resp = await client.chat.completions.create({
 
 ```typescript
 // 8.4 推入 assistant 消息
-messages.push(assistantMsg);
+workingMessages.push(assistantMsg);
 
 // 8.5 finish_reason === 'tool_calls' → 继续执行工具
 
@@ -1058,7 +1046,7 @@ for (const block of assistantMsg.tool_calls) {
     // → runRead("package.json") → 返回文件内容 (最多 50000 字符)
     console.log(`[SubAgent tester]   ← { "name": "learn_cc_space", "dependencies": { ... } }`);
 
-    messages.push({
+    workingMessages.push({
         role: 'tool',
         tool_call_id: block.id,
         name: 'read_file',
@@ -1073,12 +1061,9 @@ for (const block of assistantMsg.tool_calls) {
 // 8.7 继续循环 (loop = 1)
 resp = await client.chat.completions.create({
     model: MODEL,
-    messages: [
-        { role: 'system', content: '...' },
-        { role: 'user', content: '读取 package.json 并总结依赖数量' },
-        { role: 'assistant', content: '我来读取 package.json 文件', tool_calls: [...] },
-        { role: 'tool', name: 'read_file', content: '{ "dependencies": {...}, "devDependencies": {...} }' }
-    ],
+    messages: workingMessages.map(m => ({ role: m.role, content: m.content, ... })),
+    // workingMessages 现在包含: system, user, assistant(tool_calls), tool
+    // → [{ role:'system',... }, { role:'user',... }, { role:'assistant', tool_calls:[...] }, { role:'tool',... }]
     tools: SUB_AGENT_TOOLS,
     max_tokens: 4000
 });
@@ -1092,12 +1077,12 @@ resp = await client.chat.completions.create({
 
 ```typescript
 // 8.8 finish_reason !== 'tool_calls' → break, 退出循环
-messages.push(assistantMsg);
-// → messages 数组现在包含完整的对话历史:
+workingMessages.push(assistantMsg);
+// → workingMessages 数组现在包含完整的对话历史:
 //   [system, user, assistant(tool_calls), tool, assistant(stop)]
 
-return messages;
-// → 返回给 SubAgentRunner._loop()
+return workingMessages;
+// → 返回给 SubAgentRunner._loop() (注意: 调用方的 messages 未被修改)
 ```
 
 ---

@@ -876,9 +876,12 @@ interface TeamConfig {
 
 | 方法 | 说明 |
 |------|------|
-| `spawn(name, role)` | 创建或唤醒成员, 状态设为 `working` |
+| `spawn(name, role)` | 创建子 Agent (从属模式), 状态设为 `working`, 最多 10 人 |
+| `createTeammate(name, role)` | 创建 Teammate (对等模式), 状态设为 `working`, 最多 10 人 |
 | `setStatus(name, status)` | 更新成员状态 |
 | `listAll()` | 返回所有成员列表 |
+
+**安全限制:** `MAX_TEAM_SIZE = 10` — 防止 Teammate 无限递归创建其他 Teammate 导致 API 成本失控
 
 **存储**: `.team/config.json` (原子写入)
 
@@ -980,24 +983,25 @@ Teammate 模式 (对等关系):
 ```typescript
 // src/lib/agent/subagent.ts
 export async function runAgentLoop(params: {
-    messages: any[];          // 初始消息 (原地修改)
+    messages: any[];          // 初始消息 (不会被修改, 内部使用副本)
     systemPrompt: string;     // 系统提示词
     tools: any[];             // 可用工具
     toolHandlers: Record<string, Function>;  // 工具处理器
     maxLoops?: number;        // 最大循环次数 (默认 10)
     onLog?: (msg: string) => void;          // 日志回调
-}): Promise<any[]>
+}): Promise<any[]>           // 返回 workingMessages (含 system prompt)
 ```
 
 循环逻辑 (与 route.ts 主循环相同):
 ```
+workingMessages = [system, ...messages]  ← 不修改调用方的 messages
 for (loop 0..maxLoops):
-    1. microCompact(messages) — 压缩旧工具结果
+    1. microCompact(workingMessages) — 压缩旧工具结果
     2. LLM call (client.chat.completions.create)
-    3. push assistant message
+    3. push assistant message to workingMessages
     4. if finish_reason !== 'tool_calls' → break
-    5. 执行 tool_calls → push tool results
-return messages
+    5. 执行 tool_calls → push tool results to workingMessages
+return workingMessages
 ```
 
 ### 10.4 SubAgentRunner 和 TeammateRunner 生命周期
@@ -1054,7 +1058,7 @@ SubAgentRunner._loop() 被唤醒
     ├── BUS.readInbox("tester") → 读取任务
     ├── 构建 messages [{role:'user', content:'测试登录模块'}]
     ├── runAgentLoop()
-    │     ├── system prompt (基于角色定制)
+    │     ├── 创建 workingMessages = [system, ...messages] (不修改原数组)
     │     ├── LLM 调用 → 工具执行 → 结果注入 (最多 10 轮)
     │     └── 提取最终 assistant 回复
     │
