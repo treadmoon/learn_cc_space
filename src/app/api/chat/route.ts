@@ -103,7 +103,7 @@ function compressMessages(msgs: any[]): string {
 // client, MODEL → imported from '@/lib/agent/llm-client'
 
 // ═══════════════════════════════════════════════════════════════
-// 工具定义 (19 个)
+// 工具定义 (24 个)
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -145,6 +145,7 @@ const TOOLS = [
     { type: 'function' as const, function: { name: 'cron_remove', description: 'Remove a scheduled background command.', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
     // ── 团队协作工具 ──
     { type: 'function' as const, function: { name: 'spawn_teammate', description: 'Create or wake a sub-agent teammate with a name and role.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Unique teammate name' }, role: { type: 'string', description: 'Role description for the teammate' } }, required: ['name', 'role'] } } },
+    { type: 'function' as const, function: { name: 'create_teammate', description: 'Create a collaborative teammate (peer agent with full tools and team communication).', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Unique teammate name' }, role: { type: 'string', description: 'Role description for the teammate' } }, required: ['name', 'role'] } } },
     { type: 'function' as const, function: { name: 'list_teammates', description: 'List all teammates and their current status.', parameters: { type: 'object', properties: {} } } },
     { type: 'function' as const, function: { name: 'set_teammate_status', description: 'Update a teammate\'s status (e.g. working, idle).', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Teammate name' }, status: { type: 'string', description: 'New status value' } }, required: ['name', 'status'] } } },
     { type: 'function' as const, function: { name: 'send_message', description: 'Send a message to a teammate\'s inbox.', parameters: { type: 'object', properties: { to: { type: 'string', description: 'Recipient teammate name' }, content: { type: 'string', description: 'Message content' } }, required: ['to', 'content'] } } },
@@ -342,6 +343,7 @@ function createToolHandlers(messages: any[], reqId: string): Record<string, Func
 
         // ── 团队协作 ──
         spawn_teammate:      (kw: any) => TEAM_MGR.spawn(kw.name, kw.role),
+        create_teammate:     (kw: any) => TEAM_MGR.createTeammate(kw.name, kw.role),
         list_teammates:      () => TEAM_MGR.listAll(),
         set_teammate_status: (kw: any) => { TEAM_MGR.setStatus(kw.name, kw.status); return `Status of '${kw.name}' set to '${kw.status}'`; },
         send_message:        (kw: any) => BUS.sendInbox(kw.to, 'agent', kw.content),

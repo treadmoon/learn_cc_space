@@ -863,6 +863,8 @@ export class TeammateManager {
     public configPath: string;
     /** 活跃的子 Agent 运行器 — 按成员名索引 */
     private runners: Map<string, any>;  // any: 避免循环导入 SubAgentRunner 类型
+    /** 最大团队成员数 — 防止无限递归创建 */
+    private static readonly MAX_TEAM_SIZE = 10;
 
     constructor() {
         mkdirSync(TEAM_DIR);
@@ -914,8 +916,12 @@ export class TeammateManager {
         if (member) {
             member.status = 'working';
             member.role = role;
+            member.type = 'subagent';
         } else {
-            config.members.push({ name, role, status: 'working' });
+            if (config.members.length >= TeammateManager.MAX_TEAM_SIZE) {
+                return `Error: Max team size (${TeammateManager.MAX_TEAM_SIZE}) reached. Remove idle members first.`;
+            }
+            config.members.push({ name, role, status: 'working', type: 'subagent' });
         }
         this._save(config);
 
@@ -931,6 +937,48 @@ export class TeammateManager {
         runner.start();
 
         return `Spawned '${name}' (role: ${role}), sub-agent loop started`;
+    }
+
+    /**
+     * 创建 Teammate (对等协作模式) — 注册成员 + 启动 TeammateRunner
+     *
+     * 与 spawn() 的区别:
+     *   - spawn()        → SubAgentRunner (有限工具, 单向汇报)
+     *   - createTeammate() → TeammateRunner (全量工具, 双向通信)
+     *
+     * TeammateRunner 拥有全部工具 (含 send_message, read_inbox, create_teammate),
+     * 可以与其他 Teammate 直接通信, 不需要通过主 Agent 中转。
+     *
+     * @param name Teammate 名称 (唯一标识)
+     * @param role 角色描述 (注入 system prompt)
+     */
+    createTeammate(name: string, role: string) {
+        const config = this._load();
+        let member = config.members.find((m: any) => m.name === name);
+        if (member) {
+            member.status = 'working';
+            member.role = role;
+            member.type = 'teammate';
+        } else {
+            if (config.members.length >= TeammateManager.MAX_TEAM_SIZE) {
+                return `Error: Max team size (${TeammateManager.MAX_TEAM_SIZE}) reached. Remove idle members first.`;
+            }
+            config.members.push({ name, role, status: 'working', type: 'teammate' });
+        }
+        this._save(config);
+
+        // 停止旧 runner (如果存在)
+        if (this.runners.has(name)) {
+            this.runners.get(name).stop();
+        }
+
+        // 启动新 TeammateRunner (延迟导入避免循环依赖)
+        const { TeammateRunner } = require('./subagent');
+        const runner = new TeammateRunner(name, role);
+        this.runners.set(name, runner);
+        runner.start();
+
+        return `Created teammate '${name}' (role: ${role}), collaborative mode`;
     }
 
     /**

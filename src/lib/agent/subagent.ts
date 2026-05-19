@@ -56,6 +56,26 @@ const SUB_AGENT_TOOLS = [
     { type: 'function' as const, function: { name: 'knowledge_search', description: 'Semantic search over the knowledge base.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, top_k: { type: 'number', description: 'Number of results (default 5)' } }, required: ['query'] } } },
 ];
 
+/**
+ * Teammate 可用工具 — 全量工具 (含团队协作)
+ * 与主 Agent 的 TOOLS 相同, Teammate 可以:
+ *   - 使用所有文件/任务/知识工具
+ *   - send_message 给任意成员发消息
+ *   - read_inbox 读取自己的收件箱
+ *   - create_teammate 创建其他 Teammate
+ *   - list_teammates 查看团队成员
+ *   - set_teammate_status 更新自己或他人的状态
+ */
+const TEAMMATE_TOOLS = [
+    ...SUB_AGENT_TOOLS,
+    // ── 团队协作工具 (SubAgent 没有的) ──
+    { type: 'function' as const, function: { name: 'create_teammate', description: 'Create a collaborative teammate (peer agent with full tools and team communication).', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Unique teammate name' }, role: { type: 'string', description: 'Role description for the teammate' } }, required: ['name', 'role'] } } },
+    { type: 'function' as const, function: { name: 'list_teammates', description: 'List all teammates and their current status.', parameters: { type: 'object', properties: {} } } },
+    { type: 'function' as const, function: { name: 'set_teammate_status', description: 'Update a teammate\'s status (e.g. working, idle).', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Teammate name' }, status: { type: 'string', description: 'New status value' } }, required: ['name', 'status'] } } },
+    { type: 'function' as const, function: { name: 'send_message', description: 'Send a message to a teammate\'s inbox.', parameters: { type: 'object', properties: { to: { type: 'string', description: 'Recipient teammate name' }, content: { type: 'string', description: 'Message content' } }, required: ['to', 'content'] } } },
+    { type: 'function' as const, function: { name: 'read_inbox', description: 'Read and clear your inbox messages (destructive read).', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Teammate name whose inbox to read' } }, required: ['name'] } } },
+];
+
 // ═══════════════════════════════════════════════════════════════
 // runAgentLoop — 可复用的 Agent 循环核心
 // ═══════════════════════════════════════════════════════════════
@@ -87,12 +107,12 @@ export async function runAgentLoop(params: {
     const { messages, systemPrompt, tools, toolHandlers, maxLoops = 10, onLog } = params;
     const log = onLog || (() => {});
 
-    // 注入 system prompt 作为第一条消息
-    messages.unshift({ role: 'system', content: systemPrompt });
+    // 注入 system prompt — 使用新数组而非修改调用方的原数组
+    const workingMessages = [{ role: 'system', content: systemPrompt }, ...messages];
 
     for (let loop = 0; loop < maxLoops; loop++) {
         // Step 1: 微压缩 — 节省 context window
-        const compacted = microCompact(messages);
+        const compacted = microCompact(workingMessages);
         if (compacted > 0) {
             log(`[COMPACT] Compressed ${compacted} old tool results`);
         }
@@ -104,7 +124,7 @@ export async function runAgentLoop(params: {
             try {
                 resp = await client.chat.completions.create({
                     model: MODEL,
-                    messages: messages.map(m => ({
+                    messages: workingMessages.map(m => ({
                         role: m.role,
                         content: m.content,
                         tool_calls: m.tool_calls,
@@ -127,7 +147,7 @@ export async function runAgentLoop(params: {
 
         // Step 3: 推入 assistant 消息
         const assistantMsg = resp.choices[0].message;
-        messages.push(assistantMsg as any);
+        workingMessages.push(assistantMsg as any);
 
         const displayContent = assistantMsg.content || '';
         if (displayContent) {
@@ -152,7 +172,7 @@ export async function runAgentLoop(params: {
                 inputArgs = JSON.parse(block.function.arguments || '{}');
             } catch (e: any) {
                 const output = `Error: Failed to parse tool arguments: ${e.message}`;
-                messages.push({ role: 'tool', tool_call_id: block.id, name: block.function.name, content: output });
+                workingMessages.push({ role: 'tool', tool_call_id: block.id, name: block.function.name, content: output });
                 continue;
             }
 
@@ -160,7 +180,7 @@ export async function runAgentLoop(params: {
             const output = await handler(inputArgs);
             log(`  ← ${String(output).slice(0, 80)}`);
 
-            messages.push({
+            workingMessages.push({
                 role: 'tool',
                 tool_call_id: block.id,
                 name: block.function.name,
@@ -169,7 +189,7 @@ export async function runAgentLoop(params: {
         }
     }
 
-    return messages;
+    return workingMessages;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -192,8 +212,8 @@ export async function runAgentLoop(params: {
  *   4. 连续 60s 无消息 → 自动 setStatus('idle') 并退出
  */
 export class SubAgentRunner {
-    private name: string;
-    private role: string;
+    protected name: string;
+    protected role: string;
     private running = false;
     private wakeResolve: (() => void) | null = null;
 
@@ -328,7 +348,7 @@ export class SubAgentRunner {
      * 构建子 Agent 的 system prompt
      * 基于角色描述, 包含工作流程指引
      */
-    private _buildSystemPrompt(): string {
+    protected _buildSystemPrompt(): string {
         return `You are a sub-agent named "${this.name}" with the role: ${this.role}.
 
 You work as part of a team under the main agent's coordination.
@@ -350,7 +370,7 @@ You work as part of a team under the main agent's coordination.
      * 构建子 Agent 的工具处理器映射
      * 与 route.ts 的 createToolHandlers 相同, 但排除团队协作工具
      */
-    private _buildToolHandlers(): Record<string, Function> {
+    protected _buildToolHandlers(): Record<string, Function> {
         return {
             bash:       (kw: any) => runBash(kw.command),
             read_file:  (kw: any) => runRead(kw.path),
@@ -382,14 +402,12 @@ You work as part of a team under the main agent's coordination.
      */
     private _waitForWake(timeoutMs: number): Promise<void> {
         return new Promise(resolve => {
-            this.wakeResolve = resolve;
             const timer = setTimeout(() => {
                 this.wakeResolve = null;
                 resolve();
             }, timeoutMs);
 
             // 如果被 wake() 提前唤醒, 清除定时器
-            const origResolve = this.wakeResolve;
             this.wakeResolve = () => {
                 clearTimeout(timer);
                 this.wakeResolve = null;
@@ -404,5 +422,110 @@ You work as part of a team under the main agent's coordination.
             this.wakeResolve();
             this.wakeResolve = null;
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TeammateRunner — 对等协作模式的 Agent 执行引擎
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * TeammateRunner — 对等协作模式的 Agent 执行引擎
+ *
+ * 与 SubAgentRunner 的区别:
+ *   - 全量工具 (含 send_message, read_inbox, create_teammate)
+ *   - System prompt 指导协作而非单向汇报
+ *   - 工具 handler 包含团队协作 (sendInbox, readInbox, createTeammate)
+ *   - 发件人是 this.name (自己), 不是 'agent'
+ *
+ * 典型场景:
+ *   "研究员搜索文档, 发给程序员, 程序员写代码"
+ *   researcher ←→ coder (可以互相通信)
+ */
+export class TeammateRunner extends SubAgentRunner {
+
+    /**
+     * 覆写: 协作模式的 system prompt
+     * 强调对等关系、主动协作、双向通信
+     */
+    protected _buildSystemPrompt(): string {
+        return `You are "${this.name}", a teammate in a collaborative team. Role: ${this.role}.
+
+You are an EQUAL team member — not a sub-agent. You can:
+- Communicate with any teammate via send_message
+- Read your inbox via read_inbox
+- Create new teammates via create_teammate
+- Use all tools (bash, read_file, write_file, edit_file, etc.)
+
+## Workflow
+1. Check your inbox for messages from other teammates
+2. Complete tasks using available tools
+3. Send results to whoever asked (or to "agent" if from the main agent)
+4. Proactively communicate: ask questions, share progress, coordinate
+
+## Guidelines
+- You are a peer, not a subordinate — take initiative
+- When you receive a task from "agent" (the main agent), reply to "agent"
+- When you receive a task from another teammate, reply to that teammate
+- If you need help, send_message to another teammate who might know
+- Keep responses concise but complete`;
+    }
+
+    /**
+     * 覆写: 全量工具 handler (含团队协作)
+     *
+     * 与 SubAgentRunner._buildToolHandlers() 的区别:
+     *   - send_message: 发件人是 this.name (自己), 不是 'agent'
+     *   - read_inbox: 默认读自己的 inbox
+     *   - create_teammate: 可以创建新的 Teammate
+     *   - list_teammates: 查看团队成员
+     *   - set_teammate_status: 更新状态
+     */
+    protected _buildToolHandlers(): Record<string, Function> {
+        return {
+            // ── 文件系统 (与 SubAgent 相同) ──
+            bash:       (kw: any) => runBash(kw.command),
+            read_file:  (kw: any) => runRead(kw.path),
+            write_file: (kw: any) => runWrite(kw.path, kw.content),
+            edit_file:  (kw: any) => runEdit(kw.path, kw.old_text, kw.new_text),
+
+            // ── 待办 ──
+            TodoWrite:  (kw: any) => TODO.update(kw.items || []),
+
+            // ── 知识技能 ──
+            load_skill: (kw: any) => SKILLS.load(kw.name),
+
+            // ── 后台任务 ──
+            background_run:   (kw: any) => BG_MGR.run(kw.command, kw.timeout || 120),
+            check_background: (kw: any) => BG_MGR.check(kw.task_id),
+
+            // ── 持久化任务 ──
+            task_create: (kw: any) => TASK_MGR.create(kw.subject, kw.description || '', this.name, {}),
+            task_get:    (kw: any) => TASK_MGR.get(kw.task_id),
+            task_update: (kw: any) => TASK_MGR.update(kw.task_id, kw.status, kw.add_blocked_by, kw.add_blocks),
+            task_list:   () => TASK_MGR.listAll(),
+
+            // ── 定时调度 ──
+            cron_schedule: (kw: any) => CRON_MGR.schedule(kw.name, kw.command, kw.interval_ms),
+            cron_remove:   (kw: any) => CRON_MGR.remove(kw.name),
+
+            // ── 制品 ──
+            artifact_save: (kw: any) => ARTIFACT_MGR.save(kw.path, kw.task_id, kw.description),
+
+            // ── RAG 知识库 ──
+            knowledge_ingest: async (kw: any) => {
+                if (kw.path) return await KNOWLEDGE_MGR.ingest(kw.path);
+                if (kw.text) return await KNOWLEDGE_MGR.ingestText(kw.text, kw.source || 'inline');
+                return 'Error: Provide either path or text';
+            },
+            knowledge_search: async (kw: any) => await KNOWLEDGE_MGR.search(kw.query, kw.top_k),
+
+            // ── 团队协作工具 (SubAgent 没有的) ──
+            create_teammate:      (kw: any) => TEAM_MGR.createTeammate(kw.name, kw.role),
+            list_teammates:       () => TEAM_MGR.listAll(),
+            set_teammate_status:  (kw: any) => { TEAM_MGR.setStatus(kw.name, kw.status); return `Status of '${kw.name}' set to '${kw.status}'`; },
+            send_message:         (kw: any) => BUS.sendInbox(kw.to, this.name, kw.content),
+            read_inbox:           (kw: any) => BUS.readInbox(kw.name || this.name),
+        };
     }
 }

@@ -32,7 +32,7 @@
 │  └────────────────────────────────────┼─────────────────────────┘  │
 │                                       │                             │
 │  ┌────────────────────────────────────▼─────────────────────────┐  │
-│  │                     Tool System (19 tools)                    │  │
+│  │                     Tool System (24 tools)                    │  │
 │  │  ┌──────┐ ┌────────┐ ┌──────┐ ┌────────┐ ┌───────────────┐ │  │
 │  │  │ bash │ │ r/w/e  │ │ todo │ │ task   │ │ knowledge     │ │  │
 │  │  │      │ │ file   │ │      │ │ mgr    │ │ ingest/search │ │  │
@@ -265,7 +265,7 @@ const handler = toolHandlers[name] ?? (
 );
 ```
 
-### 5.6 工具清单 (19 个内置 + MCP 动态)
+### 5.6 工具清单 (24 个内置 + MCP 动态)
 
 | 工具 | 类型 | 说明 |
 |------|------|------|
@@ -284,6 +284,12 @@ const handler = toolHandlers[name] ?? (
 | `task_list` | 任务 | 列出所有任务 |
 | `cron_schedule` | 定时 | 创建定时任务 |
 | `cron_remove` | 定时 | 移除定时任务 |
+| `spawn_teammate` | 团队 | 创建子 Agent (从属模式, SubAgentRunner) |
+| `create_teammate` | 团队 | 创建 Teammate (对等模式, TeammateRunner) |
+| `list_teammates` | 团队 | 列出所有团队成员 |
+| `set_teammate_status` | 团队 | 更新成员状态 |
+| `send_message` | 团队 | 发送消息到成员收件箱 |
+| `read_inbox` | 团队 | 读取收件箱 (破坏性) |
 | `artifact_save` | 制品 | 保存文件为任务制品 |
 | `knowledge_ingest` | RAG | 导入文件/文本到知识库 |
 | `knowledge_search` | RAG | 语义搜索知识库 |
@@ -903,10 +909,11 @@ interface TeamConfig {
 ### 9.4 当前状态
 
 当前团队协作系统已实现:
-- ✅ TeammateManager 单例注册 + SubAgentRunner 生命周期管理
+- ✅ TeammateManager 单例注册 + SubAgentRunner / TeammateRunner 生命周期管理
 - ✅ MessageBus 基础设施 (sendInbox + readInbox + 即时唤醒)
-- ✅ 5 个 LLM 工具注册 (spawn_teammate / list_teammates / set_teammate_status / send_message / read_inbox)
-- ✅ SubAgentRunner 独立执行引擎 (后台 LLM 循环)
+- ✅ 6 个 LLM 工具注册 (spawn_teammate / create_teammate / list_teammates / set_teammate_status / send_message / read_inbox)
+- ✅ SubAgentRunner 独立执行引擎 (从属模式, 16 个工具, 单向汇报)
+- ✅ TeammateRunner 对等执行引擎 (对等模式, 21 个工具, 双向通信)
 - ✅ UI 展示 (RightPanel 成员列表 + 状态指示器)
 - ✅ /api/state 暴露 teammates 数据
 
@@ -916,29 +923,44 @@ interface TeamConfig {
 
 ### 10.1 概述
 
-子任务系统让主 Agent 可以派生子 Agent 执行独立任务。每个子 Agent 拥有独立的 LLM 上下文、工具集和后台执行循环, 通过 MessageBus 与主 Agent 通信。
+子任务系统提供两种 Agent 协作模式:
+
+1. **SubAgent 模式** (从属): 主 Agent 派生子 Agent, 单向汇报, 有限工具集
+2. **Teammate 模式** (对等): 创建对等协作 Agent, 双向通信, 全量工具集
 
 ```
+SubAgent 模式 (从属关系):
 ┌──────────────────────────────────────────────────────────┐
 │                   主 Agent (route.ts)                      │
 │                                                          │
-│  1. 分析任务 → 拆解为子任务                               │
-│  2. spawn_teammate("researcher", "搜索相关文档")          │
+│  1. spawn_teammate("worker", "执行任务")                 │
+│  2. send_message({to:"worker", content:"任务"})          │
+│  3. read_inbox({name:"agent"}) → 收集结果               │
+└──────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌──────────────┐
+│ SubAgentRunner│
+│  worker       │
+│ · 16 个工具   │  ← 排除团队工具
+│ · 单向汇报    │  ← 结果发给 "agent"
+└──────────────┘
+
+Teammate 模式 (对等关系):
+┌──────────────────────────────────────────────────────────┐
+│                   主 Agent (route.ts)                      │
+│                                                          │
+│  1. create_teammate("researcher", "搜索文档")            │
+│  2. create_teammate("coder", "写代码")                   │
 │  3. send_message({to:"researcher", content:"搜索..."})   │
-│  4. 继续处理其他工作...                                   │
-│  5. read_inbox({name:"agent"}) → 收集子 Agent 结果       │
-│  6. 综合结果 → 生成最终回复                               │
 └──────────────────────────────────────────────────────────┘
         │                    │
         ▼                    ▼
 ┌──────────────┐    ┌──────────────┐
-│  SubAgentRunner│    │ SubAgentRunner│
-│  researcher   │    │  coder        │
-│              │    │              │
-│ · 独立 LLM   │    │ · 独立 LLM   │
-│ · 独立上下文  │    │ · 独立上下文  │
-│ · 全量工具集  │    │ · 全量工具集  │
-│ · 后台循环    │    │ · 后台循环    │
+│TeammateRunner│    │TeammateRunner│
+│  researcher  │←──→│  coder       │  ← 可以互相通信!
+│ · 21 个工具  │    │ · 21 个工具  │
+│ · 双向通信   │    │ · 双向通信   │
 └──────────────┘    └──────────────┘
 ```
 
@@ -946,10 +968,10 @@ interface TeamConfig {
 
 | 文件 | 职责 |
 |------|------|
-| `src/lib/agent/subagent.ts` | SubAgentRunner 类 + runAgentLoop() |
+| `src/lib/agent/subagent.ts` | SubAgentRunner + TeammateRunner + runAgentLoop() |
 | `src/lib/agent/llm-client.ts` | OpenAI client 单例 (共享) |
 | `src/lib/agent/managers.ts` | TeammateManager (生命周期) + MessageBus (通信) |
-| `src/app/api/chat/route.ts` | 5 个 LLM 工具注册 |
+| `src/app/api/chat/route.ts` | 6 个 LLM 工具注册 (含 create_teammate) |
 
 ### 10.3 执行引擎: runAgentLoop()
 
@@ -978,7 +1000,7 @@ for (loop 0..maxLoops):
 return messages
 ```
 
-### 10.4 SubAgentRunner 生命周期
+### 10.4 SubAgentRunner 和 TeammateRunner 生命周期
 
 ```typescript
 // src/lib/agent/subagent.ts
@@ -988,17 +1010,26 @@ export class SubAgentRunner {
     stop(): void     // 停止循环
     wake(): void     // 唤醒轮询 (即时响应)
 }
+
+// TeammateRunner 继承 SubAgentRunner, 覆写:
+//   _buildSystemPrompt() — 对等协作的 system prompt
+//   _buildToolHandlers() — 全量工具 (含团队协作)
+export class TeammateRunner extends SubAgentRunner { ... }
 ```
 
-内部循环 (`_loop()`):
+内部循环 (`_loop()`) — 两者共用:
 ```
 while (running):
     1. 检查 TeammateManager 中 status, 如果 'idle' → 退出
     2. BUS.readInbox(name) — 破坏性读取收件箱
-    3. 有消息 → 构建 messages → runAgentLoop() → 结果发回主 Agent
+    3. 有消息 → 构建 messages → runAgentLoop() → 结果发回
     4. 无消息 → 等待 wake() 或 5s 超时后再次轮询
     5. 连续 60s 无消息 → 自动 setStatus('idle') 并退出
 ```
+
+关键区别:
+- SubAgentRunner: 结果发给 "agent" (主 Agent), 使用 16 个工具
+- TeammateRunner: 结果发给消息发送者 (可能是任意成员), 使用 21 个工具
 
 ### 10.5 完整数据流
 
@@ -1046,11 +1077,12 @@ SubAgentRunner._loop() 被唤醒
 
 ### 10.6 LLM 工具注册
 
-route.ts 中注册的 5 个团队协作工具:
+route.ts 中注册的 6 个团队协作工具:
 
 | 工具 | 参数 | Handler |
 |------|------|---------|
-| `spawn_teammate` | `name`, `role` | `TEAM_MGR.spawn()` → 写 config + 启动 SubAgentRunner |
+| `spawn_teammate` | `name`, `role` | `TEAM_MGR.spawn()` → 写 config (type:subagent) + 启动 SubAgentRunner |
+| `create_teammate` | `name`, `role` | `TEAM_MGR.createTeammate()` → 写 config (type:teammate) + 启动 TeammateRunner |
 | `list_teammates` | 无 | `TEAM_MGR.listAll()` → 返回成员列表 |
 | `set_teammate_status` | `name`, `status` | `TEAM_MGR.setStatus()` → 更新状态 + 停止 runner |
 | `send_message` | `to`, `content` | `BUS.sendInbox()` → 写 inbox + 唤醒 runner |
@@ -1058,7 +1090,9 @@ route.ts 中注册的 5 个团队协作工具:
 
 ### 10.7 子 Agent 工具集
 
-子 Agent 继承主 Agent 的全量工具, **排除团队协作工具** (防止递归创建子 Agent):
+两种模式的工具集不同:
+
+**SubAgent (SUB_AGENT_TOOLS — 16 个)**: 排除团队协作工具, 防止递归创建子 Agent
 
 | 类别 | 工具 |
 |------|------|
@@ -1070,6 +1104,18 @@ route.ts 中注册的 5 个团队协作工具:
 | 定时调度 | `cron_schedule`, `cron_remove` |
 | 制品 | `artifact_save` |
 | RAG 知识库 | `knowledge_ingest`, `knowledge_search` |
+
+**Teammate (TEAMMATE_TOOLS — 21 个)**: 全量工具, 含团队协作
+
+在 SubAgent 的 16 个工具基础上, 额外包含:
+
+| 类别 | 工具 | 说明 |
+|------|------|------|
+| 团队协作 | `create_teammate` | 创建其他 Teammate |
+| 团队协作 | `list_teammates` | 查看团队成员 |
+| 团队协作 | `set_teammate_status` | 更新成员状态 |
+| 团队协作 | `send_message` | 给任意成员发消息 |
+| 团队协作 | `read_inbox` | 读取自己的收件箱 |
 
 ### 10.8 与直接工具调用的区别
 
