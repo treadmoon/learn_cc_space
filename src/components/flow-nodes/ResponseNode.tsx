@@ -6,14 +6,14 @@ import { MessageSquare, CheckCircle2, Loader2, Zap, Bell } from 'lucide-react';
 import type { WorkflowStep } from '../WorkflowView';
 
 const STATUS_COLOR: Record<string, string> = {
-    completed: '#34D399',
-    running: '#6EE7B7',
-    error: '#F87171',
+    completed: 'var(--color-success)',
+    running: 'var(--color-success)',
+    error: 'var(--color-danger)',
 };
 
 export function ResponseNode({ data }: NodeProps) {
     const step = data.step as WorkflowStep;
-    const color = STATUS_COLOR[step.status] || '#34D399';
+    const color = STATUS_COLOR[step.status] || 'var(--color-success)';
 
     // Determine icon based on label
     const isNotification = step.label.includes('notification') || step.label.includes('bg');
@@ -22,12 +22,12 @@ export function ResponseNode({ data }: NodeProps) {
     return (
         <>
             <Handle type="target" position={Position.Top} className="!bg-[var(--bg-4)] !border-[var(--bg-4)] !w-2 !h-2" />
-            <div className="relative group" style={{ filter: step.status === 'running' ? `drop-shadow(0 0 8px ${color}40)` : 'none' }}>
+            <div className="relative group">
                 {/* Pill/capsule shape */}
                 <div className="flex items-center gap-2.5 px-5 py-2.5 rounded-full border-2 transition-all"
                     style={{
-                        background: `${color}12`,
-                        borderColor: step.status === 'running' ? color : `${color}50`,
+                        background: `color-mix(in srgb, ${color} 7%, transparent)`,
+                        borderColor: step.status === 'running' ? color : `color-mix(in srgb, ${color} 30%, transparent)`,
                     }}>
                     {step.status === 'running' ? (
                         <Loader2 className="w-4 h-4 animate-spin shrink-0" style={{ color }} />
@@ -37,7 +37,7 @@ export function ResponseNode({ data }: NodeProps) {
                     <span className="text-[11px] font-mono font-semibold" style={{ color }}>
                         {step.label}
                     </span>
-                    <Zap className="w-3 h-3 shrink-0" style={{ color: `${color}60` }} />
+                    <Zap className="w-3 h-3 shrink-0" style={{ color: `color-mix(in srgb, ${color} 38%, transparent)` }} />
                 </div>
 
                 {/* Pulse ring for running */}

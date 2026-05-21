@@ -33,7 +33,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
     return (
         <div className="flex flex-col h-full">
             <div className="h-12 topbar-purple flex items-center px-4 gap-2.5 shrink-0">
-                <span className="w-2 h-2 rounded-full bg-[#818CF8]" />
+                <span className="w-2 h-2 rounded-full bg-[var(--color-accent2)]" />
                 <h2 className="sh sh-indigo">{t.sysHub}</h2>
             </div>
 
@@ -41,11 +41,11 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
             <div className="px-4 py-3 bg-[var(--bg-0)] flex items-center justify-around shrink-0">
                 <Metric label={t.sessionRounds} value={String(telemetry.totalRequests)} color="text-[var(--text-primary)]" />
                 <div className="w-px h-8 bg-[var(--bg-3)]" />
-                <Metric label={t.lastReqTokens} value={fmt(telemetry.lastRequest)} color="text-[#38BDF8]"
+                <Metric label={t.lastReqTokens} value={fmt(telemetry.lastRequest)} color="text-[var(--color-accent)]"
                     icon={<Zap className="w-3 h-3 inline -mt-0.5 mr-0.5 opacity-60" />}
                     sub={telemetry.lastRequest > 0 ? `↑${fmt(telemetry.lastPrompt)} ↓${fmt(telemetry.lastCompletion)}` : undefined} />
                 <div className="w-px h-8 bg-[var(--bg-3)]" />
-                <Metric label={t.totalSessionTokens} value={fmt(telemetry.totalSession)} color="text-[#818CF8]" />
+                <Metric label={t.totalSessionTokens} value={fmt(telemetry.totalSession)} color="text-[var(--color-accent2)]" />
             </div>
 
             <div className="flex flex-col flex-1 overflow-hidden">
@@ -58,7 +58,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                             <div className="flex flex-wrap gap-1.5">
                                 {teammates.map((m, idx) => (
                                     <div key={idx} className="group/tip relative flex items-center gap-1.5 bg-[var(--bg-3)] rounded-md px-2 py-1 cursor-default">
-                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${m.status === 'working' ? 'bg-[#2DD4BF] blink' : 'bg-[var(--text-ghost)]'}`} />
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${m.status === 'working' ? 'bg-[var(--color-teal)] blink' : 'bg-[var(--text-ghost)]'}`} />
                                         <span className="text-[11px] text-[var(--text-secondary)] font-medium">{m.name}</span>
                                         {/* Tooltip — opens downward to avoid overflow clipping */}
                                         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 invisible group-hover/tip:visible opacity-0 group-hover/tip:opacity-100 transition-all duration-150 z-50 pointer-events-none">
@@ -67,7 +67,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                                             </div>
                                             <div className="px-2.5 py-1.5 rounded-md bg-[var(--bg-4)] text-[10px] whitespace-nowrap shadow-xl ring-1 ring-white/5">
                                                 <div className="text-[var(--text-primary)] font-medium">{m.role}</div>
-                                                <div className={`text-[9px] mt-0.5 ${m.status === 'working' ? 'text-[#2DD4BF]' : 'text-[var(--text-muted)]'}`}>{m.status}</div>
+                                                <div className={`text-[9px] mt-0.5 ${m.status === 'working' ? 'text-[var(--color-teal)]' : 'text-[var(--text-muted)]'}`}>{m.status}</div>
                                             </div>
                                         </div>
                                     </div>
@@ -79,7 +79,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                     <div className="divider" />
 
                     <Section title={t.activeProcess} titleClass="sh sh-sky"
-                        icon={<Activity className="w-3.5 h-3.5 text-[#38BDF8]" />}
+                        icon={<Activity className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
                         count={bgTasks.length > 0 ? <span className="tag tag-sky">{bgTasks.length}</span> : undefined}
                         defaultOpen={bgTasks.length > 0}>
                         {bgTasks.length === 0 ? (
@@ -102,7 +102,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                     <div className="divider" />
 
                     <Section title={t.daemons} titleClass="sh sh-amber"
-                        icon={<Clock className="w-3.5 h-3.5 text-[#FBBF24]" />}
+                        icon={<Clock className="w-3.5 h-3.5 text-[var(--color-warn)]" />}
                         count={cronTasks.length > 0 ? <span className="tag tag-amber">{cronTasks.length}</span> : undefined}
                         defaultOpen={cronTasks.length > 0}>
                         {cronTasks.length === 0 ? (
@@ -122,51 +122,12 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                         )}
                     </Section>
 
-                    <div className="divider" />
-
-                    <Section title={t.auditLog} titleClass="sh sh-teal"
-                        icon={<Clock className="w-3.5 h-3.5 text-[#2DD4BF]" />}
-                        count={auditLog && auditLog.length > 0 ? <span className="tag tag-teal">{auditLog.length}</span> : undefined}
-                        defaultOpen={false}>
-                        {!auditLog || auditLog.length === 0 ? (
-                            <p className="text-[12px] text-[var(--text-ghost)] italic">{t.noAudit}</p>
-                        ) : (
-                            <ul className="space-y-1.5">
-                                {auditLog.map((entry, idx) => {
-                                    const actionMap: Record<string, { icon: string; tagCls: string }> = {
-                                        create: { icon: '+', tagCls: 'tag tag-teal' },
-                                        update: { icon: '↻', tagCls: 'tag tag-sky' },
-                                        delete: { icon: '✕', tagCls: 'tag tag-red' },
-                                        claim: { icon: '◎', tagCls: 'tag tag-indigo' },
-                                    };
-                                    const a = actionMap[entry.action] || actionMap.update;
-                                    const time = new Date(entry.ts);
-                                    const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
-                                    return (
-                                        <li key={idx} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--bg-3)] transition-colors">
-                                            <span className={`${a.tagCls} shrink-0`}>{a.icon}</span>
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="font-mono text-[10px] text-[var(--text-muted)]">#{entry.taskId}</span>
-                                                    <span className="text-[11px] text-[var(--text-secondary)]">{entry.action}</span>
-                                                </div>
-                                                <div className="text-[10px] text-[var(--text-ghost)]">
-                                                    {entry.actor} · {timeStr}
-                                                    {entry.details?.reqId != null && <span className="ml-1 text-[var(--text-ghost)]/50">#{String(entry.details.reqId).slice(0, 4)}</span>}
-                                                </div>
-                                            </div>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        )}
-                    </Section>
 
                     <div className="divider" />
 
-                    <Section title={t.knowledgeStats} titleClass="sh sh-amber"
-                        icon={<BookOpen className="w-3.5 h-3.5 text-[#FBBF24]" />}
-                        count={knowledge && knowledge.docCount > 0 ? <span className="tag tag-amber">{knowledge.docCount}</span> : undefined}
+                    <Section title={t.knowledgeStats} titleClass="sh sh-teal"
+                        icon={<BookOpen className="w-3.5 h-3.5 text-[var(--color-teal)]" />}
+                        count={knowledge && knowledge.docCount > 0 ? <span className="tag tag-teal">{knowledge.docCount}</span> : undefined}
                         defaultOpen={false}>
                         {!knowledge || knowledge.docCount === 0 ? (
                             <p className="text-[12px] text-[var(--text-ghost)] italic">{t.knowledgeEmpty}</p>
@@ -179,7 +140,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                                 <ul className="space-y-1">
                                     {knowledge.sources.map((s, idx) => (
                                         <li key={idx} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--bg-3)] transition-colors">
-                                            <BookOpen className="w-3 h-3 text-[#FBBF24]/60 shrink-0" />
+                                            <BookOpen className="w-3 h-3 text-[var(--color-teal)]/60 shrink-0" />
                                             <span className="text-[10px] font-mono text-[var(--text-secondary)] truncate flex-1">{s.source}</span>
                                             <span className="text-[9px] font-mono text-[var(--text-ghost)]">{s.chunkCount}c</span>
                                         </li>
@@ -197,19 +158,19 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                     <div className="px-2 py-1.5 flex items-center gap-1 shrink-0 bg-[var(--bg-1)]">
                         <button onClick={() => setTab('flow')}
                             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold font-mono uppercase tracking-wider transition-colors ${
-                                tab === 'flow' ? 'bg-[var(--bg-3)] text-[#38BDF8]' : 'text-[var(--text-ghost)] hover:text-[var(--text-muted)]'
+                                tab === 'flow' ? 'bg-[var(--bg-3)] text-[var(--color-accent)]' : 'text-[var(--text-ghost)] hover:text-[var(--text-muted)]'
                             }`}>
                             <GitGraph className="w-3 h-3" />{t.tabWorkflow}
                         </button>
                         <button onClick={() => setTab('logs')}
                             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold font-mono uppercase tracking-wider transition-colors ${
-                                tab === 'logs' ? 'bg-[var(--bg-3)] text-[#38BDF8]' : 'text-[var(--text-ghost)] hover:text-[var(--text-muted)]'
+                                tab === 'logs' ? 'bg-[var(--bg-3)] text-[var(--color-accent)]' : 'text-[var(--text-ghost)] hover:text-[var(--text-muted)]'
                             }`}>
                             <Terminal className="w-3 h-3" />{t.tabLogs}
                         </button>
                         <button onClick={() => setTab('timeline')}
                             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold font-mono uppercase tracking-wider transition-colors ${
-                                tab === 'timeline' ? 'bg-[var(--bg-3)] text-[#38BDF8]' : 'text-[var(--text-ghost)] hover:text-[var(--text-muted)]'
+                                tab === 'timeline' ? 'bg-[var(--bg-3)] text-[var(--color-accent)]' : 'text-[var(--text-ghost)] hover:text-[var(--text-muted)]'
                             }`}>
                             <History className="w-3 h-3" />{t.tabTimeline}
                         </button>
@@ -229,7 +190,7 @@ export function RightPanel({ t, telemetry, teammates, bgTasks, cronTasks, logs, 
                             {logs.length === 0 ? (
                                 <div className="text-[var(--text-ghost)] italic text-[11px]">{t.waiting}</div>
                             ) : logs.map((log, i) => (
-                                <div key={i} className="py-0.5 px-2 rounded text-[#38BDF8]/60 hover:text-[#38BDF8] hover:bg-[var(--bg-1)] transition-colors leading-relaxed">
+                                <div key={i} className="py-0.5 px-2 rounded text-[var(--color-accent)]/60 hover:text-[var(--color-accent)] hover:bg-[var(--bg-1)] transition-colors leading-relaxed">
                                     <span className="text-[var(--text-ghost)] mr-2 select-none">{String(i + 1).padStart(3, '0')}</span>
                                     {log.msg}
                                 </div>

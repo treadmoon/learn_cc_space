@@ -113,9 +113,9 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 };
 
 const STATUS_STYLES: Record<string, { node: string; line: string; text: string }> = {
-    completed: { node: 'bg-[#2DD4BF] text-[var(--bg-0)]', line: 'bg-[#2DD4BF]/30', text: 'text-[var(--text-secondary)]' },
-    running:   { node: 'bg-[#38BDF8] text-[var(--bg-0)] blink', line: 'bg-[#38BDF8]/30', text: 'text-[var(--text-primary)]' },
-    error:     { node: 'bg-[#F87171] text-[var(--bg-0)]', line: 'bg-[#F87171]/30', text: 'text-[#F87171]' },
+    completed: { node: 'bg-[var(--color-teal)] text-[var(--bg-0)]', line: 'bg-[var(--color-teal)]/30', text: 'text-[var(--text-secondary)]' },
+    running:   { node: 'bg-[var(--color-accent)] text-[var(--bg-0)] blink', line: 'bg-[var(--color-accent)]/30', text: 'text-[var(--text-primary)]' },
+    error:     { node: 'bg-[var(--color-danger)] text-[var(--bg-0)]', line: 'bg-[var(--color-danger)]/30', text: 'text-[var(--color-danger)]' },
 };
 
 interface WorkflowViewProps {
@@ -157,7 +157,7 @@ function ToolDetail({ step, t }: { step: WorkflowStep; t: T }) {
                     {step.toolArgs && Object.keys(step.toolArgs).length > 0 && (
                         <div>
                             <div className="text-[9px] text-[var(--text-ghost)] font-mono uppercase tracking-wider mb-1">{t.wfInput}</div>
-                            <pre className="text-[10px] text-[#38BDF8]/80 font-mono bg-[var(--bg-0)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                            <pre className="text-[10px] text-[var(--color-accent)]/80 font-mono bg-[var(--bg-0)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
                                 {JSON.stringify(step.toolArgs, null, 2)}
                             </pre>
                         </div>
@@ -165,7 +165,7 @@ function ToolDetail({ step, t }: { step: WorkflowStep; t: T }) {
                     {step.toolOutput && (
                         <div>
                             <div className="text-[9px] text-[var(--text-ghost)] font-mono uppercase tracking-wider mb-1">{t.wfOutput}</div>
-                            <pre className="text-[10px] text-[#2DD4BF]/80 font-mono bg-[var(--bg-0)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                            <pre className="text-[10px] text-[var(--color-teal)]/80 font-mono bg-[var(--bg-0)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
                                 {step.toolOutput}
                             </pre>
                         </div>
@@ -177,8 +177,10 @@ function ToolDetail({ step, t }: { step: WorkflowStep; t: T }) {
 }
 
 function StepItem({ step, isLast, agentStatus, t }: { step: WorkflowStep; isLast: boolean; agentStatus: string; t: T }) {
-    const s = STATUS_STYLES[step.status] || STATUS_STYLES.completed;
-    const isRunning = step.status === 'running' && agentStatus !== 'idle';
+    // When agent is idle, treat any 'running' step as 'completed' (agent finished but log may be missing)
+    const effectiveStatus = step.status === 'running' && agentStatus === 'idle' ? 'completed' : step.status;
+    const s = STATUS_STYLES[effectiveStatus] || STATUS_STYLES.completed;
+    const isRunning = effectiveStatus === 'running';
 
     return (
         <div className="flex gap-3 min-h-[32px]">
@@ -191,7 +193,7 @@ function StepItem({ step, isLast, agentStatus, t }: { step: WorkflowStep; isLast
             <div className="flex-1 pb-2 min-w-0">
                 <div className="flex items-center gap-2">
                     <span className={`text-[11px] font-semibold font-mono ${s.text}`}>{resolveLabel(step.label, t)}</span>
-                    {isRunning && <span className="text-[9px] text-[#38BDF8] font-mono">运行中</span>}
+                    {isRunning && <span className="text-[9px] text-[var(--color-accent)] font-mono">运行中</span>}
                 </div>
                 {step.detail && (
                     <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5 truncate">{step.detail}</p>

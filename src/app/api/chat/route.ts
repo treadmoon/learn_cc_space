@@ -12,7 +12,7 @@
 import { NextRequest } from 'next/server';
 import OpenAI from 'openai';
 import { runBash, runRead, runWrite, runEdit } from '@/lib/agent/tools';
-import { TASK_MGR, TODO, BG_MGR, CRON_MGR, SKILLS, ARTIFACT_MGR, KNOWLEDGE_MGR, MCP_MGR, microCompact, BUS, TEAM_MGR } from '@/lib/agent/managers';
+import { TASK_MGR, TODO, BG_MGR, CRON_MGR, SKILLS, ARTIFACT_MGR, KNOWLEDGE_MGR, MCP_MGR, microCompact, BUS, TEAM_MGR, WORKTREE_MGR } from '@/lib/agent/managers';
 import { client, MODEL } from '@/lib/agent/llm-client';
 
 export const runtime = 'nodejs';
@@ -154,7 +154,11 @@ const TOOLS = [
     { type: 'function' as const, function: { name: 'artifact_save', description: 'Save a file as a task artifact to .artifacts/ directory.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path to save as artifact' }, task_id: { type: 'integer', description: 'Associated task ID (optional, saves to shared/ if omitted)' }, description: { type: 'string', description: 'Brief description of the artifact' } }, required: ['path'] } } },
     // ── RAG 知识库工具 ──
     { type: 'function' as const, function: { name: 'knowledge_ingest', description: 'Ingest a file or text into the knowledge base for later retrieval. Supports .md, .txt, .json, .csv, .py, .ts, .js and other text formats.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path to ingest' }, text: { type: 'string', description: 'Direct text content to ingest (alternative to path)' }, source: { type: 'string', description: 'Source identifier for text mode (required when using text)' } } } } },
-    { type: 'function' as const, function: { name: 'knowledge_search', description: 'Semantic search over the knowledge base. Use this to find relevant information before answering questions.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, top_k: { type: 'number', description: 'Number of results to return (default 5)' } }, required: ['query'] } } }
+    { type: 'function' as const, function: { name: 'knowledge_search', description: 'Semantic search over the knowledge base. Use this to find relevant information before answering questions.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, top_k: { type: 'number', description: 'Number of results to return (default 5)' } }, required: ['query'] } } },
+    // ── Worktree 工具 ──
+    { type: 'function' as const, function: { name: 'worktree_list', description: 'List all git worktrees with structured info (path, branch, head, bare, locked).', parameters: { type: 'object', properties: {} } } },
+    { type: 'function' as const, function: { name: 'worktree_add', description: 'Create a new git worktree for a branch. If path is omitted, auto-generates based on branch name.', parameters: { type: 'object', properties: { branch: { type: 'string', description: 'Branch name to create worktree for' }, path: { type: 'string', description: 'Optional target directory for the worktree' } }, required: ['branch'] } } },
+    { type: 'function' as const, function: { name: 'worktree_remove', description: 'Remove a git worktree by path or branch name.', parameters: { type: 'object', properties: { target: { type: 'string', description: 'Worktree absolute path or branch name to remove' } }, required: ['target'] } } }
 ];
 
 /**
@@ -352,6 +356,11 @@ function createToolHandlers(messages: any[], reqId: string): Record<string, Func
         // ── 制品 ──
         artifact_save: (kw: any) => ARTIFACT_MGR.save(kw.path, kw.task_id, kw.description),
 
+        // ── Worktree ──
+        worktree_list:   () => JSON.stringify(WORKTREE_MGR.listStructured(), null, 2),
+        worktree_add:    (kw: any) => WORKTREE_MGR.create(kw.branch, kw.path),
+        worktree_remove: (kw: any) => WORKTREE_MGR.remove(kw.target),
+
         // ── RAG 知识库 (异步) ──
         knowledge_ingest: async (kw: any) => {
             if (kw.path) return await KNOWLEDGE_MGR.ingest(kw.path);
@@ -493,9 +502,9 @@ export async function POST(req: NextRequest) {
                     // finish_reason === 'tool_calls' → LLM 要求执行工具 → 继续
                     // finish_reason === 'stop' 或其他 → LLM 完成回复 → 退出
                     if (resp.choices[0].finish_reason !== 'tool_calls') {
-                        if (displayContent) {
-                            sendEvent('log', { msg: `Response: ${displayContent.slice(0, 60)}${displayContent.length > 60 ? '...' : ''}`, reqId, responsePreview: displayContent.slice(0, 200) });
-                        }
+                        // Always send Response log to mark thinking step as completed in FlowView
+                        const preview = displayContent ? displayContent.slice(0, 60) + (displayContent.length > 60 ? '...' : '') : '(no text output)';
+                        sendEvent('log', { msg: `Response: ${preview}`, reqId, responsePreview: displayContent?.slice(0, 200) || '' });
                         break;
                     }
 

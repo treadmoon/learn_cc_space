@@ -15,11 +15,16 @@ export interface ArtifactGroup {
     files: Array<{ name: string; createdAt: string; size: number; description: string }>;
 }
 
+export interface WorktreeInfo {
+    path: string; branch: string; head: string;
+    bare: boolean; locked: boolean; isMain: boolean;
+}
+
 interface Props {
     t: T;
     todos: Array<{ content: string; status: string; activeForm: string }>;
     tasks: Task[];
-    worktrees: string;
+    worktrees: WorktreeInfo[];
     artifacts: ArtifactGroup[];
     onToggleTodo: (idx: number, status: string) => void;
     taskFilter?: { status?: string; owner?: string; keyword?: string };
@@ -45,18 +50,35 @@ export function LeftPanel({ t, todos, tasks, worktrees, artifacts, onToggleTodo,
     return (
         <div className="flex flex-col h-full">
             <div className="h-12 topbar-accent flex items-center px-4 gap-2.5 shrink-0">
-                <span className="w-2 h-2 rounded-full bg-[#38BDF8]" />
+                <span className="w-2 h-2 rounded-full bg-[var(--color-accent)]" />
                 <h2 className="sh sh-sky">{t.localOps}</h2>
             </div>
 
             <div className="flex-1 overflow-y-auto scrollbar-hide">
                 <Section title={t.worktrees} titleClass="sh sh-indigo"
-                    icon={<GitBranch className="w-3.5 h-3.5 text-[#818CF8]" />} defaultOpen={false}>
-                    {!worktrees || worktrees.includes('Not a git') ? (
+                    icon={<GitBranch className="w-3.5 h-3.5 text-[var(--color-accent2)]" />}
+                    count={worktrees.length > 0 ? <span className="tag tag-indigo">{worktrees.length}</span> : undefined}
+                    defaultOpen={false}>
+                    {worktrees.length === 0 ? (
                         <p className="text-[12px] text-[var(--text-ghost)] italic">{t.noWorktrees}</p>
                     ) : (
-                        <div className="card-dark p-3">
-                            <pre className="whitespace-pre-wrap font-mono text-[11px] text-[var(--text-muted)]">{worktrees}</pre>
+                        <div className="flex flex-col gap-1.5">
+                            {worktrees.map((wt, i) => (
+                                <div key={i} className="card-dark px-3 py-2 flex items-center gap-2">
+                                    <GitBranch className="w-3 h-3 shrink-0" style={{ color: wt.isMain ? 'var(--color-success)' : 'var(--color-accent2)' }} />
+                                    <div className="min-w-0 flex-1">
+                                        <span className="text-[11px] font-mono font-semibold text-[var(--text-primary)] block truncate">
+                                            {wt.branch}
+                                        </span>
+                                        <span className="text-[9px] font-mono text-[var(--text-ghost)] block truncate">
+                                            {wt.path}
+                                        </span>
+                                    </div>
+                                    {wt.isMain && <span className="tag tag-green text-[8px]">main</span>}
+                                    {wt.locked && <span className="tag tag-amber text-[8px]">locked</span>}
+                                    {wt.bare && <span className="tag tag-gray text-[8px]">bare</span>}
+                                </div>
+                            ))}
                         </div>
                     )}
                 </Section>
@@ -74,8 +96,8 @@ export function LeftPanel({ t, todos, tasks, worktrees, artifacts, onToggleTodo,
                                     className="group flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all hover:bg-[var(--bg-3)] active:scale-[0.98]"
                                     onClick={() => onToggleTodo(idx, todo.status)}>
                                     <span className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[9px] font-bold shrink-0 transition-all ${
-                                        todo.status === 'completed' ? 'bg-[#2DD4BF] border-[#2DD4BF] text-[var(--bg-0)]'
-                                        : todo.status === 'in_progress' ? 'border-[#38BDF8] text-[#38BDF8]'
+                                        todo.status === 'completed' ? 'bg-[var(--color-teal)] border-[var(--color-teal)] text-[var(--bg-0)]'
+                                        : todo.status === 'in_progress' ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
                                         : 'border-[var(--text-ghost)] group-hover:border-[var(--text-muted)]'
                                     }`}>
                                         {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '▸' : ''}
@@ -252,7 +274,7 @@ export function LeftPanel({ t, todos, tasks, worktrees, artifacts, onToggleTodo,
                     <>
                         <div className="divider" />
                         <Section title="产出文件" titleClass="sh sh-sky"
-                            icon={<FileBox className="w-3.5 h-3.5 text-[#38BDF8]" />}
+                            icon={<FileBox className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
                             count={<span className="tag tag-sky">{totalFiles}</span>}
                             defaultOpen={false}>
                             <ul className="space-y-2">
@@ -264,7 +286,7 @@ export function LeftPanel({ t, todos, tasks, worktrees, artifacts, onToggleTodo,
                                         <ul className="space-y-0.5">
                                             {group.files.map((f, fi) => (
                                                 <li key={fi} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--bg-3)] transition-colors">
-                                                    <FileText className="w-3 h-3 text-[#38BDF8]/60 shrink-0" />
+                                                    <FileText className="w-3 h-3 text-[var(--color-accent)]/60 shrink-0" />
                                                     <div className="min-w-0 flex-1">
                                                         <div className="text-[11px] text-[var(--text-secondary)] truncate">{f.name}</div>
                                                         {f.description && <div className="text-[10px] text-[var(--text-ghost)] truncate">{f.description}</div>}

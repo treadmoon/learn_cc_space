@@ -6,24 +6,24 @@ import { Brain, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import type { WorkflowStep } from '../WorkflowView';
 
 const STATUS_COLOR: Record<string, string> = {
-    completed: '#818CF8',
-    running: '#A78BFA',
-    error: '#F87171',
+    completed: 'var(--color-accent2)',
+    running: 'var(--color-accent2)',
+    error: 'var(--color-danger)',
 };
 
 export function ThinkingNode({ data }: NodeProps) {
     const step = data.step as WorkflowStep;
-    const color = STATUS_COLOR[step.status] || '#818CF8';
+    const color = STATUS_COLOR[step.status] || 'var(--color-accent2)';
 
     return (
         <>
             <Handle type="target" position={Position.Top} className="!bg-[var(--bg-4)] !border-[var(--bg-4)] !w-2 !h-2" />
-            <div className="relative group" style={{ filter: step.status === 'running' ? `drop-shadow(0 0 8px ${color}40)` : 'none' }}>
+            <div className="relative group">
                 {/* Stadium shape — very rounded rectangle */}
                 <div className="flex items-center gap-2.5 px-5 py-3 rounded-[20px] border-2 transition-all min-w-[140px]"
                     style={{
-                        background: `${color}12`,
-                        borderColor: step.status === 'running' ? color : `${color}50`,
+                        background: `color-mix(in srgb, ${color} 8%, transparent)`,
+                        borderColor: step.status === 'running' ? color : `color-mix(in srgb, ${color} 30%, transparent)`,
                     }}>
                     {/* Status dot */}
                     <div className="relative shrink-0">

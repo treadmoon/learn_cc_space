@@ -7,9 +7,11 @@ import { LeftPanel } from '@/components/LeftPanel';
 import { RightPanel } from '@/components/RightPanel';
 import { ChatPanel, type Attachment, type Message } from '@/components/ChatPanel';
 import type { LogEntry } from '@/components/WorkflowView';
+import { useTheme } from '@/hooks/useTheme';
 
 export default function Home() {
     const [lang, setLang] = useState<Lang>('zh');
+    const { theme, toggle: toggleTheme } = useTheme();
     const [messages, setMessages] = useState<Message[]>([]);
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [status, setStatus] = useState<'idle' | 'thinking' | 'executing_tools'>('idle');
@@ -17,14 +19,14 @@ export default function Home() {
         todos: Array<{ content: string; status: string; activeForm: string }>;
         tasks: Array<{ id: number; subject: string; description: string; status: string; owner: string | null; blockedBy: number[]; blocks: number[] }>;
         teammates: Array<{ name: string; role: string; status: string }>;
-        worktrees: string;
+        worktrees: Array<{ path: string; branch: string; head: string; bare: boolean; locked: boolean; isMain: boolean }>;
         bgTasks: Array<{ id: string; command: string; status: string }>;
         cronTasks: Array<{ id: string; command: string; intervalMs: number; lastRun: string | null; count: number }>;
         artifacts: Array<{ taskId: number | null; files: Array<{ name: string; createdAt: string; size: number; description: string }> }>;
         auditLog: Array<{ ts: string; action: string; taskId: number; actor: string; details: Record<string, unknown> }>;
         knowledge: { docCount: number; chunkCount: number; sources: Array<{ source: string; chunkCount: number; ingestedAt: string }> };
     }>({
-        todos: [], tasks: [], teammates: [], worktrees: '', bgTasks: [], cronTasks: [], artifacts: [], auditLog: [],
+        todos: [], tasks: [], teammates: [], worktrees: [], bgTasks: [], cronTasks: [], artifacts: [], auditLog: [],
         knowledge: { docCount: 0, chunkCount: 0, sources: [] }
     });
     const [telemetry, setTelemetry] = useState({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
@@ -40,13 +42,10 @@ export default function Home() {
     const messagesRef = useRef(messages);
     useEffect(() => { messagesRef.current = messages; }, [messages]);
     const msgId = () => crypto.randomUUID().slice(0, 8);
-    // Sync ref immediately after setMessages (useEffect is async, too slow for streaming loop)
+    // Sync ref BEFORE setMessages — ref must be current for save logic
     const addMessage = useCallback((msg: Message) => {
-        setMessages(prev => {
-            const next = [...prev, msg];
-            messagesRef.current = next;
-            return next;
-        });
+        messagesRef.current = [...messagesRef.current, msg];
+        setMessages(prev => [...prev, msg]);
     }, []);
 
     const t = TRANSLATIONS[lang];
@@ -70,20 +69,19 @@ export default function Home() {
                 const data = await res.json();
                 setGlobalState({
                     todos: data.todos || [], tasks: data.tasks || [],
-                    teammates: data.teammates || [], worktrees: data.worktrees || '',
+                    teammates: data.teammates || [], worktrees: data.worktrees || [],
                     bgTasks: data.bgTasks || [], cronTasks: data.cronTasks || [],
                     artifacts: data.artifacts || [], auditLog: data.auditLog || [],
                     knowledge: data.knowledge || { docCount: 0, chunkCount: 0, sources: [] }
                 });
                 if (data.bgNotifs?.length) {
-                    setMessages(prev => [
-                        ...prev,
-                        ...data.bgNotifs.map((n: { task_id: string; status: string; result: string }) => ({
-                            id: msgId(),
-                            role: 'assistant',
-                            content: `[BACKGROUND TASK: ${n.task_id}] Status: ${n.status}\nOutput:\n${n.result}`
-                        }))
-                    ]);
+                    const bgMsgs = data.bgNotifs.map((n: { task_id: string; status: string; result: string }) => ({
+                        id: msgId(),
+                        role: 'assistant' as const,
+                        content: `[BACKGROUND TASK: ${n.task_id}] Status: ${n.status}\nOutput:\n${n.result}`
+                    }));
+                    messagesRef.current = [...messagesRef.current, ...bgMsgs];
+                    setMessages(prev => [...prev, ...bgMsgs]);
                 }
             } catch {}
         };
@@ -106,6 +104,7 @@ export default function Home() {
                         .then(sd => {
                             if (sd.success && sd.data) {
                                 setCurrentSessionId(sd.data.id);
+                                messagesRef.current = sd.data.messages || [];
                                 setMessages(sd.data.messages || []);
                             }
                         }).catch(() => {});
@@ -154,66 +153,88 @@ export default function Home() {
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
-            let done = false;
+            let streamDone = false;
             let buffer = '';
+            let shouldSave = false;
+            let saveReqId = '';
 
-            while (!done) {
+            const processBlock = (block: string) => {
+                const eventMatch = block.match(/event: (.*)\n/);
+                const dataMatch = block.match(/data: ([\s\S]*)/);
+                if (!eventMatch || !dataMatch) return;
+
+                const event = eventMatch[1];
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let dataObj: any;
+                try { dataObj = JSON.parse(dataMatch[1]); } catch { dataObj = dataMatch[1]; }
+
+                switch (event) {
+                    case 'log':
+                        if (typeof dataObj === 'object' && dataObj.msg) {
+                            setLogs(prev => [...prev, { msg: dataObj.msg, reqId: dataObj.reqId || 'unknown', ts: Date.now(), toolName: dataObj.toolName, toolArgs: dataObj.toolArgs, toolOutput: dataObj.toolOutput }]);
+                        } else {
+                            setLogs(prev => [...prev, { msg: String(dataObj), reqId: 'unknown', ts: Date.now() }]);
+                        }
+                        break;
+                    case 'state': setStatus(dataObj.status); break;
+                    case 'message': addMessage({ id: msgId(), role: 'assistant', content: dataObj.content }); break;
+                    case 'telemetry':
+                        setTelemetry(prev => ({
+                            totalSession: prev.totalSession + (dataObj.total_tokens || 0),
+                            lastRequest: dataObj.total_tokens || 0,
+                            totalRequests: prev.totalRequests + 1,
+                            lastPrompt: dataObj.prompt_tokens || 0,
+                            lastCompletion: dataObj.completion_tokens || 0,
+                        }));
+                        break;
+                    case 'done':
+                        setStatus('idle');
+                        shouldSave = true;
+                        saveReqId = dataObj.reqId || '';
+                        break;
+                    case 'error':
+                        setLogs(prev => [...prev, { msg: `[ERROR] ${dataObj.message}`, reqId: 'error', ts: Date.now() }]);
+                        setStatus('idle');
+                        break;
+                }
+            };
+
+            const processBuffer = (text: string, isFinal: boolean) => {
+                const parts = text.split('\n\n');
+                // Last part may be incomplete (no trailing \n\n) — keep as remaining unless final flush
+                const remaining = isFinal ? '' : (parts.pop() || '');
+                for (const block of parts) {
+                    if (block.trim()) processBlock(block);
+                }
+                // Final flush: process remaining text as a complete block even without \n\n
+                if (isFinal && remaining.trim()) {
+                    processBlock(remaining);
+                }
+                return isFinal ? '' : remaining;
+            };
+
+            while (!streamDone) {
                 const { value, done: doneReading } = await reader.read();
-                done = doneReading;
+                streamDone = doneReading;
                 if (value) {
                     buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n\n');
-                    buffer = lines.pop() || '';
-
-                    for (const block of lines) {
-                        const eventMatch = block.match(/event: (.*)\n/);
-                        const dataMatch = block.match(/data: ([\s\S]*)/);
-                        if (!eventMatch || !dataMatch) continue;
-
-                        const event = eventMatch[1];
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        let dataObj: any;
-                        try { dataObj = JSON.parse(dataMatch[1]); } catch { dataObj = dataMatch[1]; }
-
-                        switch (event) {
-                            case 'log':
-                                if (typeof dataObj === 'object' && dataObj.msg) {
-                                    setLogs(prev => [...prev, { msg: dataObj.msg, reqId: dataObj.reqId || 'unknown', ts: Date.now(), toolName: dataObj.toolName, toolArgs: dataObj.toolArgs, toolOutput: dataObj.toolOutput }]);
-                                } else {
-                                    setLogs(prev => [...prev, { msg: String(dataObj), reqId: 'unknown', ts: Date.now() }]);
-                                }
-                                break;
-                            case 'state': setStatus(dataObj.status); break;
-                            case 'message': addMessage({ id: msgId(), role: 'assistant', content: dataObj.content }); break;
-                            case 'telemetry':
-                                setTelemetry(prev => ({
-                                    totalSession: prev.totalSession + (dataObj.total_tokens || 0),
-                                    lastRequest: dataObj.total_tokens || 0,
-                                    totalRequests: prev.totalRequests + 1,
-                                    lastPrompt: dataObj.prompt_tokens || 0,
-                                    lastCompletion: dataObj.completion_tokens || 0,
-                                }));
-                                break;
-                            case 'done':
-                                setStatus('idle');
-                                // Auto-save session after streaming completes
-                                if (activeSessionId) {
-                                    const finalMsgs = messagesRef.current;
-                                    const title = prevMessages.length === 0 ? inputText.slice(0, 40) : undefined;
-                                    fetch('/api/sessions', {
-                                        method: 'PATCH',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ id: activeSessionId, messages: finalMsgs, title })
-                                    }).then(() => refreshSessions()).catch(() => {});
-                                }
-                                break;
-                            case 'error':
-                                setLogs(prev => [...prev, { msg: `[ERROR] ${dataObj.message}`, reqId: 'error', ts: Date.now() }]);
-                                setStatus('idle');
-                                break;
-                        }
-                    }
+                    buffer = processBuffer(buffer, false);
                 }
+            }
+            // Flush decoder and process any remaining buffer
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+                processBuffer(buffer, true);
+            }
+            // Save session AFTER all events are processed
+            if (shouldSave && activeSessionId) {
+                const finalMsgs = messagesRef.current;
+                const title = prevMessages.length === 0 ? inputText.slice(0, 40) : undefined;
+                fetch('/api/sessions', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: activeSessionId, messages: finalMsgs, title })
+                }).then(() => refreshSessions()).catch(() => {});
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -233,6 +254,7 @@ export default function Home() {
             const data = await res.json();
             if (data.success) {
                 setCurrentSessionId(data.data.id);
+                messagesRef.current = [];
                 setMessages([]);
                 setLogs([]);
                 setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
@@ -247,6 +269,7 @@ export default function Home() {
             const data = await res.json();
             if (data.success && data.data) {
                 setCurrentSessionId(data.data.id);
+                messagesRef.current = data.data.messages || [];
                 setMessages(data.data.messages || []);
                 setLogs([]);
                 setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
@@ -270,6 +293,7 @@ export default function Home() {
     }, [sessions, currentSessionId, handleSwitchSession, handleNewSession]);
 
     const handleClearMessages = useCallback(async () => {
+        messagesRef.current = [];
         setMessages([]);
         setLogs([]);
         setTelemetry({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
@@ -379,6 +403,8 @@ export default function Home() {
                 t={t}
                 lang={lang}
                 onToggleLang={() => setLang(l => l === 'zh' ? 'en' : 'zh')}
+                theme={theme}
+                onToggleTheme={toggleTheme}
                 messages={messages}
                 status={status}
                 onSend={handleSend}

@@ -35,35 +35,35 @@ function buildTimeline(logs: LogEntry[], auditLog: AuditEntry[]): TimelineItem[]
         const msg = entry.msg;
 
         if (msg === '> User prompt sent') {
-            items.push({ ts: entry.ts, type: 'user_prompt', icon: <UserCircle className="w-3 h-3" />, color: 'text-[#38BDF8]', bg: 'bg-[#38BDF8]/10', label: '用户发送消息' });
+            items.push({ ts: entry.ts, type: 'user_prompt', icon: <UserCircle className="w-3 h-3" />, color: 'text-[var(--color-accent)]', bg: 'bg-[var(--color-accent)]/10', label: '用户发送消息' });
         } else if (msg.startsWith('Tool: ')) {
             const match = msg.match(/^Tool: (\S+)/);
             const name = match?.[1] || 'unknown';
-            items.push({ ts: entry.ts, type: 'tool_call', icon: <Terminal className="w-3 h-3" />, color: 'text-[#818CF8]', bg: 'bg-[#818CF8]/10', label: `调用 ${name}`, detail: entry.toolArgs ? JSON.stringify(entry.toolArgs).slice(0, 120) : undefined, extra: { toolArgs: entry.toolArgs } });
+            items.push({ ts: entry.ts, type: 'tool_call', icon: <Terminal className="w-3 h-3" />, color: 'text-[var(--color-accent2)]', bg: 'bg-[var(--color-accent2)]/10', label: `调用 ${name}`, detail: entry.toolArgs ? JSON.stringify(entry.toolArgs).slice(0, 120) : undefined, extra: { toolArgs: entry.toolArgs } });
         } else if (msg.startsWith('Result: ')) {
-            items.push({ ts: entry.ts, type: 'tool_result', icon: <CheckCircle2 className="w-3 h-3" />, color: 'text-[#2DD4BF]', bg: 'bg-[#2DD4BF]/10', label: '工具返回', detail: entry.toolOutput?.slice(0, 120) });
+            items.push({ ts: entry.ts, type: 'tool_result', icon: <CheckCircle2 className="w-3 h-3" />, color: 'text-[var(--color-teal)]', bg: 'bg-[var(--color-teal)]/10', label: '工具返回', detail: entry.toolOutput?.slice(0, 120) });
         } else if (msg.startsWith('Response: ')) {
-            items.push({ ts: entry.ts, type: 'response', icon: <MessageSquare className="w-3 h-3" />, color: 'text-[#2DD4BF]', bg: 'bg-[#2DD4BF]/10', label: '生成回复', detail: msg.slice(10, 150) });
+            items.push({ ts: entry.ts, type: 'response', icon: <MessageSquare className="w-3 h-3" />, color: 'text-[var(--color-teal)]', bg: 'bg-[var(--color-teal)]/10', label: '生成回复', detail: msg.slice(10, 150) });
         } else if (msg.startsWith('[COMPACT]')) {
-            items.push({ ts: entry.ts, type: 'compact', icon: <Package className="w-3 h-3" />, color: 'text-[#FBBF24]', bg: 'bg-[#FBBF24]/10', label: '上下文压缩', detail: msg });
+            items.push({ ts: entry.ts, type: 'compact', icon: <Package className="w-3 h-3" />, color: 'text-[var(--color-warn)]', bg: 'bg-[var(--color-warn)]/10', label: '上下文压缩', detail: msg });
         } else if (msg.startsWith('[ERROR]') || msg.startsWith('[PARSE_ERROR]')) {
-            items.push({ ts: entry.ts, type: 'error', icon: <AlertCircle className="w-3 h-3" />, color: 'text-[#F87171]', bg: 'bg-[#F87171]/10', label: '错误', detail: msg.slice(0, 120) });
+            items.push({ ts: entry.ts, type: 'error', icon: <AlertCircle className="w-3 h-3" />, color: 'text-[var(--color-danger)]', bg: 'bg-[var(--color-danger)]/10', label: '错误', detail: msg.slice(0, 120) });
         } else if (msg.startsWith('LLM call failed')) {
-            items.push({ ts: entry.ts, type: 'retry', icon: <RefreshCw className="w-3 h-3" />, color: 'text-[#FBBF24]', bg: 'bg-[#FBBF24]/10', label: 'LLM 重试', detail: msg });
+            items.push({ ts: entry.ts, type: 'retry', icon: <RefreshCw className="w-3 h-3" />, color: 'text-[var(--color-warn)]', bg: 'bg-[var(--color-warn)]/10', label: 'LLM 重试', detail: msg });
         } else if (msg === 'Received background notifications') {
-            items.push({ ts: entry.ts, type: 'bg_notify', icon: <Zap className="w-3 h-3" />, color: 'text-[#38BDF8]', bg: 'bg-[#38BDF8]/10', label: '后台任务通知' });
+            items.push({ ts: entry.ts, type: 'bg_notify', icon: <Zap className="w-3 h-3" />, color: 'text-[var(--color-accent)]', bg: 'bg-[var(--color-accent)]/10', label: '后台任务通知' });
         } else if (msg === '> Abort signal sent') {
-            items.push({ ts: entry.ts, type: 'abort', icon: <AlertCircle className="w-3 h-3" />, color: 'text-[#F87171]', bg: 'bg-[#F87171]/10', label: '用户中止' });
+            items.push({ ts: entry.ts, type: 'abort', icon: <AlertCircle className="w-3 h-3" />, color: 'text-[var(--color-danger)]', bg: 'bg-[var(--color-danger)]/10', label: '用户中止' });
         }
     }
 
     for (const entry of auditLog) {
         const ts = new Date(entry.ts).getTime();
         const actionIcons: Record<string, { icon: React.ReactNode; color: string; bg: string }> = {
-            create: { icon: <Plus className="w-3 h-3" />, color: 'text-[#2DD4BF]', bg: 'bg-[#2DD4BF]/10' },
-            update: { icon: <RefreshCw className="w-3 h-3" />, color: 'text-[#38BDF8]', bg: 'bg-[#38BDF8]/10' },
-            delete: { icon: <Trash2 className="w-3 h-3" />, color: 'text-[#F87171]', bg: 'bg-[#F87171]/10' },
-            claim: { icon: <FileText className="w-3 h-3" />, color: 'text-[#818CF8]', bg: 'bg-[#818CF8]/10' },
+            create: { icon: <Plus className="w-3 h-3" />, color: 'text-[var(--color-teal)]', bg: 'bg-[var(--color-teal)]/10' },
+            update: { icon: <RefreshCw className="w-3 h-3" />, color: 'text-[var(--color-accent)]', bg: 'bg-[var(--color-accent)]/10' },
+            delete: { icon: <Trash2 className="w-3 h-3" />, color: 'text-[var(--color-danger)]', bg: 'bg-[var(--color-danger)]/10' },
+            claim: { icon: <FileText className="w-3 h-3" />, color: 'text-[var(--color-accent2)]', bg: 'bg-[var(--color-accent2)]/10' },
         };
         const a = actionIcons[entry.action] || actionIcons.update;
         const statusDetail = entry.details?.status ? `→ ${entry.details.status}` : '';
@@ -130,7 +130,7 @@ export function TimelineView({ logs, auditLog, t }: TimelineViewProps) {
                                         {isExpanded ? t.wfCollapseDetail : t.wfExpandDetail}
                                     </button>
                                     {isExpanded && (
-                                        <pre className="mt-1 text-[10px] text-[#818CF8]/80 font-mono bg-[var(--bg-0)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                                        <pre className="mt-1 text-[10px] text-[var(--color-accent2)]/80 font-mono bg-[var(--bg-0)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
                                             {JSON.stringify(item.extra!.toolArgs, null, 2)}
                                         </pre>
                                     )}

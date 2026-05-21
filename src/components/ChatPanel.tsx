@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { Send, Loader2, Globe, Square, PanelLeftOpen, PanelRightOpen, Terminal, Sparkles, Plus, MessageSquare, ChevronDown, Trash2, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
+import { Send, Loader2, Globe, Square, PanelLeftOpen, PanelRightOpen, Terminal, Sparkles, Plus, MessageSquare, ChevronDown, Trash2, Paperclip, FileText, Image as ImageIcon, Sun, Moon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { T, Lang } from './i18n';
+import type { Theme } from '@/hooks/useTheme';
 import { FlowGraph } from './FlowGraph';
 import type { LogEntry } from './WorkflowView';
 
@@ -43,6 +44,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
 
 interface Props {
     t: T; lang: Lang; onToggleLang: () => void;
+    theme: Theme; onToggleTheme: () => void;
     messages: Message[]; status: 'idle' | 'thinking' | 'executing_tools';
     onSend: (msg: string, attachments: Attachment[]) => void; onAbort: () => void;
     onToggleLeft?: () => void; onToggleRight?: () => void;
@@ -71,7 +73,7 @@ function parseThinkingBlocks(content: string) {
     return parts;
 }
 
-export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onAbort, onToggleLeft, onToggleRight, sessions, currentSessionId, onNewSession, onSwitchSession, onDeleteSession, onClearMessages, logs, agentStatus }: Props) {
+export function ChatPanel({ t, lang, onToggleLang, theme, onToggleTheme, messages, status, onSend, onAbort, onToggleLeft, onToggleRight, sessions, currentSessionId, onNewSession, onSwitchSession, onDeleteSession, onClearMessages, logs, agentStatus }: Props) {
     const [flowDismissed, setFlowDismissed] = useState(false);
     const [input, setInput] = useState('');
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -187,7 +189,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                         <PanelLeftOpen className="w-4 h-4" />
                     </button>
                 )}
-                <Terminal className="w-4 h-4 text-[#38BDF8]" />
+                <Terminal className="w-4 h-4 text-[var(--color-accent)]" />
                 <h1 className="text-[13px] font-semibold text-[var(--text-primary)] hidden sm:block">{t.title}</h1>
 
                 {/* Session selector */}
@@ -201,7 +203,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                     {sessionMenuOpen && (
                         <div className="absolute top-full left-0 mt-1 w-64 bg-[var(--bg-2)] border border-[var(--bg-4)] rounded-xl shadow-2xl z-50 overflow-hidden animate-in">
                             <button onClick={() => { onNewSession(); setSessionMenuOpen(false); }}
-                                className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-[#38BDF8] hover:bg-[var(--bg-3)] transition-colors border-b border-[var(--bg-4)]">
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-[var(--color-accent)] hover:bg-[var(--bg-3)] transition-colors border-b border-[var(--bg-4)]">
                                 <Plus className="w-3.5 h-3.5" />{t.newSession}
                             </button>
                             <div className="max-h-60 overflow-y-auto">
@@ -227,6 +229,11 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                 </div>
 
                 <div className="ml-auto flex items-center gap-2">
+                    <button onClick={onToggleTheme}
+                        className="p-1.5 rounded-lg hover:bg-[var(--bg-4)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                        title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
+                        {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                    </button>
                     <button onClick={onToggleLang}
                         className="text-[11px] px-2.5 py-1 rounded-md bg-[var(--bg-4)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
                         <Globe className="w-3 h-3 inline mr-1 -mt-px" />{lang === 'zh' ? 'EN' : '中文'}
@@ -248,7 +255,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                 {messages.length === 0 && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-4">
                         <div className="w-16 h-16 rounded-2xl bg-[var(--bg-3)] flex items-center justify-center">
-                            <Sparkles className="w-7 h-7 text-[#818CF8]/60" />
+                            <Sparkles className="w-7 h-7 text-[var(--color-accent2)]/60" />
                         </div>
                         <p className="text-[14px] text-[var(--text-secondary)]">{t.welcomeLine}</p>
                         <p className="text-[11px] text-[var(--text-ghost)] font-mono">{t.welcomeSub}</p>
@@ -259,7 +266,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                     <div key={m.id ?? i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in`}>
                         <div className={`max-w-[90%] md:max-w-[80%] rounded-2xl px-4 py-3 ${
                             m.role === 'user'
-                                ? 'bg-[#38BDF8]/10 text-[var(--text-primary)]'
+                                ? 'bg-[var(--color-accent)]/10 text-[var(--text-primary)]'
                                 : 'card text-[var(--text-secondary)]'
                         }`}>
                             {m.role === 'user' ? (
@@ -286,13 +293,13 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                                     {parseThinkingBlocks(m.content).map((part, pIdx) => {
                                         if (part.type === 'thought') {
                                             return (
-                                                <details key={pIdx} className="group rounded-lg overflow-hidden bg-[#818CF8]/[0.06]">
-                                                    <summary className="cursor-pointer px-3 py-2 flex items-center gap-2 select-none hover:bg-[#818CF8]/[0.04] transition-colors">
-                                                        <span className="w-2 h-2 rounded-full bg-[#818CF8]/40 group-open:bg-[#818CF8] transition-colors" />
-                                                        <span className="font-mono text-[10px] tracking-wider uppercase text-[#818CF8]/60 group-open:text-[#818CF8] font-semibold transition-colors">{t.thinking}</span>
+                                                <details key={pIdx} className="group rounded-lg overflow-hidden bg-[var(--color-accent2)]/5">
+                                                    <summary className="cursor-pointer px-3 py-2 flex items-center gap-2 select-none hover:bg-[var(--color-accent2)]/5 transition-colors">
+                                                        <span className="w-2 h-2 rounded-full bg-[var(--color-accent2)]/40 group-open:bg-[var(--color-accent2)] transition-colors" />
+                                                        <span className="font-mono text-[10px] tracking-wider uppercase text-[var(--color-accent2)]/60 group-open:text-[var(--color-accent2)] font-semibold transition-colors">{t.thinking}</span>
                                                     </summary>
                                                     <div className="px-3 pb-3">
-                                                        <div className="pl-3 border-l-2 border-[#818CF8]/20 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)] italic font-mono">
+                                                        <div className="pl-3 border-l-2 border-[var(--color-accent2)]/20 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)] italic font-mono">
                                                             {part.content}
                                                         </div>
                                                     </div>
@@ -301,16 +308,16 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                                         }
                                         if (!part.content.trim()) return null;
                                         return (
-                                            <div key={pIdx} className="prose prose-invert prose-sm max-w-none
+                                            <div key={pIdx} className={`prose ${theme === 'dark' ? 'prose-invert' : ''} prose-sm max-w-none
                                                 prose-p:leading-relaxed prose-p:my-1.5
                                                 prose-pre:bg-[var(--bg-0)] prose-pre:rounded-lg prose-pre:font-mono prose-pre:border-0
-                                                prose-code:text-[#38BDF8] prose-code:text-xs prose-code:font-mono
-                                                prose-a:text-[#818CF8] prose-a:no-underline hover:prose-a:underline
+                                                prose-code:text-[var(--color-accent)] prose-code:text-xs prose-code:font-mono
+                                                prose-a:text-[var(--color-accent2)] prose-a:no-underline hover:prose-a:underline
                                                 prose-headings:text-[var(--text-primary)] prose-headings:font-semibold
                                                 prose-strong:text-[var(--text-primary)]
                                                 prose-table:text-xs prose-table:font-mono
                                                 prose-th:text-[var(--text-secondary)]
-                                                prose-li:text-[var(--text-secondary)]">
+                                                prose-li:text-[var(--text-secondary)]`}>
                                                 <ReactMarkdown remarkPlugins={[remarkGfm]}
                                                     components={{
                                                         img: ({ src, alt }) => (
@@ -330,7 +337,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                 {status !== 'idle' && (
                     <div className="flex justify-start animate-in">
                         <div className="card px-4 py-2.5 flex items-center gap-3">
-                            <Loader2 className="w-4 h-4 animate-spin text-[#38BDF8]" />
+                            <Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" />
                             <span className="text-[12px] text-[var(--text-muted)]">{status === 'thinking' ? t.analyzing : t.executing}</span>
                             <button onClick={onAbort} className="tag tag-red flex items-center gap-1 hover:brightness-125 transition-all cursor-pointer">
                                 <Square className="w-2 h-2 fill-current" />{t.stop}
@@ -343,9 +350,9 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
             <div className="p-3 md:p-4 bg-[var(--bg-1)] shrink-0"
                 onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
                 {dragging && (
-                    <div className="absolute inset-0 z-40 bg-[var(--bg-0)]/80 backdrop-blur-sm flex items-center justify-center rounded-2xl border-2 border-dashed border-[#38BDF8]">
+                    <div className="absolute inset-0 z-40 bg-[var(--bg-0)]/80 backdrop-blur-sm flex items-center justify-center rounded-2xl border-2 border-dashed border-[var(--color-accent)]">
                         <div className="text-center">
-                            <Paperclip className="w-8 h-8 text-[#38BDF8] mx-auto mb-2" />
+                            <Paperclip className="w-8 h-8 text-[var(--color-accent)] mx-auto mb-2" />
                             <p className="text-[13px] text-[var(--text-secondary)]">{t.dropFiles}</p>
                         </div>
                     </div>
@@ -392,13 +399,13 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                                     }`}
                                     onMouseDown={(e) => { e.preventDefault(); executeCommand(cmd); }}
                                     onMouseEnter={() => setSlashMenu(prev => ({ ...prev, selectedIdx: i }))}>
-                                    <span className="font-mono text-[#38BDF8]">/{cmd.name}</span>
+                                    <span className="font-mono text-[var(--color-accent)]">/{cmd.name}</span>
                                     <span className="text-[var(--text-ghost)]">{t[cmd.descKey]}</span>
                                 </button>
                             ))}
                         </div>
                     )}
-                    <span className="absolute left-3.5 bottom-3 font-mono text-[12px] text-[#38BDF8]/40 select-none pointer-events-none">❯</span>
+                    <span className="absolute left-3.5 bottom-3 font-mono text-[12px] text-[var(--color-accent)]/40 select-none pointer-events-none">❯</span>
                     <textarea ref={taRef} value={input}
                         onChange={(e) => {
                             const val = e.target.value;
@@ -452,7 +459,7 @@ export function ChatPanel({ t, lang, onToggleLang, messages, status, onSend, onA
                             <Paperclip className="w-3.5 h-3.5" />
                         </button>
                         <button type="submit" disabled={status !== 'idle' || (!input.trim() && attachments.length === 0)}
-                            className="p-2 rounded-lg bg-[#38BDF8] text-[var(--bg-0)] hover:brightness-110 transition-all disabled:opacity-20 disabled:bg-[var(--bg-4)]">
+                            className="p-2 rounded-lg bg-[var(--color-accent)] text-[var(--bg-0)] hover:brightness-110 transition-all disabled:opacity-20 disabled:bg-[var(--bg-4)]">
                             <Send className="w-3.5 h-3.5" />
                         </button>
                     </div>

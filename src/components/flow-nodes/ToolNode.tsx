@@ -16,10 +16,10 @@ const TOOL_GROUPS: Record<string, string> = {
 };
 
 const GROUP_STYLES: Record<string, { color: string; shape: string; label: string }> = {
-    file:  { color: '#38BDF8', shape: 'rect',       label: 'File' },
-    task:  { color: '#FBBF24', shape: 'diamond',    label: 'Task' },
-    bg:    { color: '#818CF8', shape: 'hexagon',    label: 'BG' },
-    bash:  { color: '#2DD4BF', shape: 'parallelogram', label: 'Shell' },
+    file:  { color: 'var(--color-accent)', shape: 'rect',       label: 'File' },
+    task:  { color: 'var(--color-warn)', shape: 'diamond',    label: 'Task' },
+    bg:    { color: 'var(--color-accent2)', shape: 'hexagon',    label: 'BG' },
+    bash:  { color: 'var(--color-teal)', shape: 'parallelogram', label: 'Shell' },
 };
 
 const TOOL_ICONS: Record<string, React.ReactNode> = {
@@ -81,7 +81,7 @@ export function ToolNode({ data }: NodeProps) {
     const [expanded, setExpanded] = useState(false);
     const group = step.toolName ? (TOOL_GROUPS[step.toolName] || 'file') : 'file';
     const gs = GROUP_STYLES[group] || GROUP_STYLES.file;
-    const statusColor = step.status === 'completed' ? gs.color : step.status === 'error' ? '#F87171' : gs.color;
+    const statusColor = step.status === 'completed' ? gs.color : step.status === 'error' ? 'var(--color-danger)' : gs.color;
     const icon = step.toolName ? (TOOL_ICONS[step.toolName] || <Terminal className="w-3.5 h-3.5" />) : <Terminal className="w-3.5 h-3.5" />;
 
     const isSpecialShape = group === 'task' || group === 'bg' || group === 'bash';
@@ -89,11 +89,11 @@ export function ToolNode({ data }: NodeProps) {
     return (
         <>
             <Handle type="target" position={Position.Top} className="!bg-[var(--bg-4)] !border-[var(--bg-4)] !w-2 !h-2" />
-            <div className="relative group" style={{ filter: step.status === 'running' ? `drop-shadow(0 0 8px ${statusColor}40)` : 'none' }}>
+            <div className="relative group">
                 <div className={`flex flex-col border-2 transition-all ${isSpecialShape ? '' : 'rounded-xl px-4 py-2.5'}`}
                     style={{
-                        background: `${statusColor}10`,
-                        borderColor: step.status === 'running' ? statusColor : `${statusColor}50`,
+                        background: `color-mix(in srgb, ${statusColor} 6%, transparent)`,
+                        borderColor: step.status === 'running' ? statusColor : `color-mix(in srgb, ${statusColor} 30%, transparent)`,
                         ...(isSpecialShape ? getShapeStyles(group, statusColor) : {}),
                     }}>
                     {isSpecialShape ? (
@@ -103,7 +103,7 @@ export function ToolNode({ data }: NodeProps) {
                                 {step.status === 'running' ? (
                                     <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: statusColor }} />
                                 ) : step.status === 'error' ? (
-                                    <AlertCircle className="w-3.5 h-3.5" style={{ color: '#F87171' }} />
+                                    <AlertCircle className="w-3.5 h-3.5" style={{ color: 'var(--color-danger)' }} />
                                 ) : (
                                     <span style={{ color: statusColor }}>{icon}</span>
                                 )}
@@ -111,7 +111,7 @@ export function ToolNode({ data }: NodeProps) {
                                     {step.label}
                                 </span>
                             </div>
-                            <span className="text-[8px] font-mono uppercase tracking-wider" style={{ color: `${statusColor}80` }}>
+                            <span className="text-[8px] font-mono uppercase tracking-wider" style={{ color: `color-mix(in srgb, ${statusColor} 50%, var(--text-ghost))` }}>
                                 {gs.label}
                             </span>
                         </div>
@@ -121,7 +121,7 @@ export function ToolNode({ data }: NodeProps) {
                             <div className="flex items-center gap-2">
                                 {/* Icon */}
                                 <div className="w-5 h-5 rounded flex items-center justify-center shrink-0"
-                                    style={{ background: `${statusColor}15`, color: statusColor }}>
+                                    style={{ background: `color-mix(in srgb, ${statusColor} 8%, transparent)`, color: statusColor }}>
                                     {step.status === 'running' ? (
                                         <Loader2 className="w-3 h-3 animate-spin" />
                                     ) : step.status === 'error' ? (
@@ -134,7 +134,7 @@ export function ToolNode({ data }: NodeProps) {
                                 </span>
                                 {/* Group tag */}
                                 <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0"
-                                    style={{ background: `${statusColor}12`, color: `${statusColor}90` }}>
+                                    style={{ background: `color-mix(in srgb, ${statusColor} 7%, transparent)`, color: `color-mix(in srgb, ${statusColor} 56%, var(--text-ghost))` }}>
                                     {gs.label}
                                 </span>
                             </div>
@@ -150,7 +150,7 @@ export function ToolNode({ data }: NodeProps) {
                             {(step.toolArgs || step.toolOutput) && (
                                 <button onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
                                     className="flex items-center gap-1 text-[8px] font-mono mt-1.5 transition-colors hover:opacity-80"
-                                    style={{ color: `${statusColor}80` }}>
+                                    style={{ color: `color-mix(in srgb, ${statusColor} 50%, var(--text-ghost))` }}>
                                     {expanded ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
                                     {expanded ? 'collapse' : 'I/O'}
                                 </button>
@@ -160,13 +160,13 @@ export function ToolNode({ data }: NodeProps) {
                                 <div className="mt-1.5 space-y-1 max-h-32 overflow-y-auto">
                                     {step.toolArgs && Object.keys(step.toolArgs).length > 0 && (
                                         <pre className="text-[8px] font-mono p-1.5 rounded bg-[var(--bg-0)] overflow-x-auto whitespace-pre-wrap break-all"
-                                            style={{ color: `${statusColor}90` }}>
+                                            style={{ color: `color-mix(in srgb, ${statusColor} 56%, var(--text-ghost))` }}>
                                             {JSON.stringify(step.toolArgs, null, 2).slice(0, 200)}
                                         </pre>
                                     )}
                                     {step.toolOutput && (
                                         <pre className="text-[8px] font-mono p-1.5 rounded bg-[var(--bg-0)] overflow-x-auto whitespace-pre-wrap break-all"
-                                            style={{ color: 'rgba(45,212,191,0.7)' }}>
+                                            style={{ color: 'var(--color-teal)' }}>
                                             {step.toolOutput.slice(0, 200)}
                                         </pre>
                                     )}

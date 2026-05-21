@@ -6,8 +6,13 @@
       "id": "1ce7bcfb",
       "role": "user",
       "content": "分析AI应用开发岗位要求，列出最重要的top5要求，给出理由"
+    },
+    {
+      "id": "7d1535ec",
+      "role": "user",
+      "content": "hai"
     }
   ],
   "createdAt": "2026-05-12T03:06:59.803Z",
-  "updatedAt": "2026-05-14T06:44:36.349Z"
+  "updatedAt": "2026-05-20T06:43:54.289Z"
 }

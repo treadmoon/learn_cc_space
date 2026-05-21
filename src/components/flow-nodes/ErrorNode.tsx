@@ -7,16 +7,16 @@ import type { WorkflowStep } from '../WorkflowView';
 
 export function ErrorNode({ data }: NodeProps) {
     const step = data.step as WorkflowStep;
-    const color = '#F87171';
+    const color = 'var(--color-danger)';
 
     return (
         <>
             <Handle type="target" position={Position.Top} className="!bg-[var(--bg-4)] !border-[var(--bg-4)] !w-2 !h-2" />
-            <div className="relative group" style={{ filter: 'drop-shadow(0 0 8px #F8717140)' }}>
+            <div className="relative group">
                 {/* Error rectangle with dashed red border */}
                 <div className="flex items-center gap-2.5 px-5 py-3 rounded-xl border-2 border-dashed transition-all min-w-[140px]"
                     style={{
-                        background: 'rgba(248,113,113,0.08)',
+                        background: 'color-mix(in srgb, var(--color-danger) 5%, transparent)',
                         borderColor: color,
                     }}>
                     <XCircle className="w-4 h-4 shrink-0" style={{ color }} />
@@ -25,7 +25,7 @@ export function ErrorNode({ data }: NodeProps) {
                             {step.label}
                         </span>
                         {step.detail && (
-                            <p className="text-[9px] font-mono mt-0.5 truncate" style={{ color: 'rgba(248,113,113,0.6)' }}>
+                            <p className="text-[9px] font-mono mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
                                 {step.detail.slice(0, 50)}
                             </p>
                         )}

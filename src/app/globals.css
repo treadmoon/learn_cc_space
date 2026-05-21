@@ -11,7 +11,8 @@
 }
 
 @layer base {
-  :root {
+  /* ── Dark theme (default) ── */
+  :root, [data-theme="dark"] {
     --bg-0: #0B0E14;
     --bg-1: #111520;
     --bg-2: #171C2A;
@@ -21,6 +22,49 @@
     --text-secondary: #94A3B8;
     --text-muted: #64748B;
     --text-ghost: #475569;
+    --color-accent: #38BDF8;
+    --color-accent2: #818CF8;
+    --color-warn: #FBBF24;
+    --color-danger: #F87171;
+    --color-success: #34D399;
+    --color-teal: #2DD4BF;
+    --color-rose: #FB7185;
+    --color-accent-rgb: 56,189,248;
+    --color-accent2-rgb: 129,140,248;
+    --color-teal-rgb: 45,212,191;
+    --color-warn-rgb: 251,191,36;
+    --color-danger-rgb: 248,113,113;
+    --glass: rgba(255,255,255,0.03);
+    --border-subtle: rgba(255,255,255,0.06);
+    --shadow-glow: rgba(56,189,248,0.08);
+  }
+
+  /* ── Light theme ── */
+  [data-theme="light"] {
+    --bg-0: #F8FAFC;
+    --bg-1: #FFFFFF;
+    --bg-2: #F1F5F9;
+    --bg-3: #E2E8F0;
+    --bg-4: #CBD5E1;
+    --text-primary: #0F172A;
+    --text-secondary: #334155;
+    --text-muted: #64748B;
+    --text-ghost: #94A3B8;
+    --color-accent: #0284C7;
+    --color-accent2: #6366F1;
+    --color-warn: #D97706;
+    --color-danger: #DC2626;
+    --color-success: #059669;
+    --color-teal: #0D9488;
+    --color-rose: #E11D48;
+    --color-accent-rgb: 2,132,199;
+    --color-accent2-rgb: 99,102,241;
+    --color-teal-rgb: 13,148,136;
+    --color-warn-rgb: 217,119,6;
+    --color-danger-rgb: 220,38,38;
+    --glass: rgba(0,0,0,0.02);
+    --border-subtle: rgba(0,0,0,0.08);
+    --shadow-glow: rgba(2,132,199,0.06);
   }
 }
 
@@ -35,37 +79,37 @@ body {
 .panel-side { background: var(--bg-1); }
 .panel-main {
   background: var(--bg-2);
-  box-shadow: 0 0 80px -20px rgba(56, 189, 248, 0.04);
+  box-shadow: 0 0 80px -20px var(--shadow-glow);
 }
 
-/* Topbars — cold tinted */
+/* Topbars — use RGB vars for theme-adaptive alpha */
 .topbar-accent {
-  background: linear-gradient(90deg, rgba(56, 189, 248, 0.10) 0%, transparent 100%);
-  border-bottom: 1px solid rgba(56, 189, 248, 0.12);
+  background: linear-gradient(90deg, rgba(var(--color-accent-rgb), 0.10) 0%, transparent 100%);
+  border-bottom: 1px solid rgba(var(--color-accent-rgb), 0.12);
 }
 .topbar-purple {
-  background: linear-gradient(90deg, rgba(129, 140, 248, 0.10) 0%, transparent 100%);
-  border-bottom: 1px solid rgba(129, 140, 248, 0.12);
+  background: linear-gradient(90deg, rgba(var(--color-accent2-rgb), 0.10) 0%, transparent 100%);
+  border-bottom: 1px solid rgba(var(--color-accent2-rgb), 0.12);
 }
 .topbar-main {
   background: var(--bg-3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 /* Section headers */
 .sh { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; }
-.sh-sky    { composes: sh; color: #38BDF8; }
-.sh-indigo { composes: sh; color: #818CF8; }
-.sh-amber  { composes: sh; color: #FBBF24; }
-.sh-teal   { composes: sh; color: #2DD4BF; }
-.sh-rose   { composes: sh; color: #FB7185; }
+.sh-sky    { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--color-accent); }
+.sh-indigo { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--color-accent2); }
+.sh-amber  { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--color-warn); }
+.sh-teal   { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--color-teal); }
+.sh-rose   { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--color-rose); }
 
 /* Cards */
 .card      { background: var(--bg-3); border-radius: 8px; }
 .card-dark { background: var(--bg-0); border-radius: 8px; }
 
 /* Dividers */
-.divider { height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); margin: 0 16px; }
+.divider { height: 1px; background: linear-gradient(90deg, transparent, var(--border-subtle), transparent); margin: 0 16px; }
 
 /* Scrollbar */
 .scrollbar-hide::-webkit-scrollbar { display: none; }
@@ -73,12 +117,12 @@ body {
 
 /* Animations */
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 8px rgba(56, 189, 248, 0.12); }
-  50% { box-shadow: 0 0 20px rgba(56, 189, 248, 0.25); }
+  0%, 100% { box-shadow: 0 0 8px rgba(var(--color-accent-rgb), 0.12); }
+  50% { box-shadow: 0 0 20px rgba(var(--color-accent-rgb), 0.25); }
 }
 .glow-focus:focus-within {
   animation: pulse-glow 2.5s ease-in-out infinite;
-  border-color: rgba(56, 189, 248, 0.35);
+  border-color: rgba(var(--color-accent-rgb), 0.35);
 }
 
 .animate-in { animation: msgIn 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
@@ -107,21 +151,21 @@ body {
 
 /* Tags */
 .tag { font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
-.tag-sky    { background: rgba(56,189,248,0.15); color: #38BDF8; }
-.tag-indigo { background: rgba(129,140,248,0.15); color: #818CF8; }
-.tag-teal   { background: rgba(45,212,191,0.15); color: #2DD4BF; }
-.tag-amber  { background: rgba(251,191,36,0.15); color: #FBBF24; }
-.tag-red    { background: rgba(248,113,113,0.15); color: #F87171; }
-.tag-gray   { background: rgba(100,116,139,0.20); color: #94A3B8; }
+.tag-sky    { background: rgba(var(--color-accent-rgb), 0.15); color: var(--color-accent); }
+.tag-indigo { background: rgba(var(--color-accent2-rgb), 0.15); color: var(--color-accent2); }
+.tag-teal   { background: rgba(var(--color-teal-rgb), 0.15); color: var(--color-teal); }
+.tag-amber  { background: rgba(var(--color-warn-rgb), 0.15); color: var(--color-warn); }
+.tag-red    { background: rgba(var(--color-danger-rgb), 0.15); color: var(--color-danger); }
+.tag-gray   { background: rgba(100,116,139,0.20); color: var(--text-secondary); }
 
-/* ── React Flow dark theme overrides ── */
+/* ── React Flow theme overrides ── */
 .react-flow__background {
   background: var(--bg-1) !important;
 }
 .react-flow__controls {
   border-radius: 10px !important;
   overflow: hidden !important;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15) !important;
 }
 .react-flow__controls button {
   background: var(--bg-3) !important;

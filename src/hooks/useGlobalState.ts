@@ -1,15 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+export interface WorktreeInfo {
+    path: string;
+    branch: string;
+    head: string;
+    bare: boolean;
+    locked: boolean;
+    isMain: boolean;
+}
+
 export interface GlobalState {
     todos: Array<{ content: string; status: string; activeForm: string }>;
     tasksString: string;
     teammates: Array<{ name: string; role: string; status: string }>;
-    worktrees: string;
+    worktrees: WorktreeInfo[];
     bgTasks: Array<{ id: string; command: string; status: string }>;
     cronTasks: Array<{ id: string; command: string; intervalMs: number; lastRun: string | null; count: number }>;
 }
 
-const EMPTY: GlobalState = { todos: [], tasksString: '', teammates: [], worktrees: '', bgTasks: [], cronTasks: [] };
+const EMPTY: GlobalState = { todos: [], tasksString: '', teammates: [], worktrees: [], bgTasks: [], cronTasks: [] };
 
 export function useGlobalState(onBgNotifs?: (msgs: string[]) => void) {
     const [state, setState] = useState<GlobalState>(EMPTY);
@@ -34,7 +43,7 @@ export function useGlobalState(onBgNotifs?: (msgs: string[]) => void) {
                     todos: data.todos || [],
                     tasksString: data.tasksString || '',
                     teammates: data.teammates || [],
-                    worktrees: data.worktrees || '',
+                    worktrees: data.worktrees || [],
                     bgTasks: data.bgTasks || [],
                     cronTasks: data.cronTasks || []
                 });

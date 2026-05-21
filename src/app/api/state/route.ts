@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
-import { TASK_MGR, TODO, TEAM_MGR, WORKTREE_MGR, BG_MGR, CRON_MGR, ARTIFACT_MGR, KNOWLEDGE_MGR, type TaskFilter } from '@/lib/agent/managers';
+import { TASK_MGR, TODO, TEAM_MGR, WORKTREE_MGR, BG_MGR, CRON_MGR, ARTIFACT_MGR, KNOWLEDGE_MGR, type TaskFilter, type WorktreeInfo } from '@/lib/agent/managers';
 
 export const runtime = 'nodejs';
 
@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
         tasksData = TASK_MGR.listAllStructured(filter);
     } catch { tasksList = 'No tasks.'; }
 
-    let worktrees = '';
-    try { worktrees = WORKTREE_MGR.list(); } catch {}
+    let worktrees: WorktreeInfo[] = [];
+    try { worktrees = WORKTREE_MGR.listStructured(); } catch {}
 
     let teammates: Array<{ name: string; role: string; status: string }> = [];
     try { teammates = TEAM_MGR.listAll(); } catch {}
