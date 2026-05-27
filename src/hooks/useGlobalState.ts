@@ -1,13 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-export interface WorktreeInfo {
-    path: string;
-    branch: string;
-    head: string;
-    bare: boolean;
-    locked: boolean;
-    isMain: boolean;
-}
+import type { WorktreeInfo } from '@/lib/types';
+export type { WorktreeInfo };
 
 export interface GlobalState {
     todos: Array<{ content: string; status: string; activeForm: string }>;

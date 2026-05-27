@@ -21,10 +21,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { exec, execSync } from 'node:child_process';
+import { exec, execSync, execFileSync } from 'node:child_process';
 import { mkdirSync } from './tools';
 import { KnowledgeManager } from './knowledge';
 import { McpManager } from './mcp';
+import type { WorktreeInfo } from '../types';
 
 const WORKDIR = process.cwd();
 const TODOS_FILE = path.join(WORKDIR, '.todos.json');      // 待办列表持久化文件
@@ -1013,18 +1014,6 @@ export class TeammateManager {
 }
 
 /**
- * Worktree 信息 — 结构化数据
- */
-export interface WorktreeInfo {
-    path: string;       // worktree 绝对路径
-    branch: string;     // 分支名 (不含 refs/heads/ 前缀)
-    head: string;       // commit hash (短)
-    bare: boolean;      // 是否 bare worktree
-    locked: boolean;    // 是否锁定
-    isMain: boolean;    // 是否主 worktree (与 WORKDIR 相同)
-}
-
-/**
  * WorktreeManager — Git worktree 管理
  *
  * 能力:
@@ -1092,9 +1081,11 @@ export class WorktreeManager {
 
     /** 创建 worktree — git worktree add <path> <branch> */
     create(branch: string, worktreePath?: string): string {
+        this._validateInput(branch);
+        if (worktreePath) this._validateInput(worktreePath);
         try {
             const targetPath = worktreePath || path.join(path.dirname(WORKDIR), `${path.basename(WORKDIR)}-${branch}`);
-            execSync(`git worktree add "${targetPath}" "${branch}"`, { cwd: WORKDIR, encoding: 'utf8', stdio: 'pipe' });
+            execFileSync('git', ['worktree', 'add', targetPath, branch], { cwd: WORKDIR, encoding: 'utf8', stdio: 'pipe' });
             return `Created worktree for '${branch}' at ${targetPath}`;
         } catch (e: any) {
             return `Error creating worktree: ${e.stderr || e.message}`;
@@ -1103,6 +1094,7 @@ export class WorktreeManager {
 
     /** 删除 worktree — 支持传路径或分支名 */
     remove(target: string): string {
+        this._validateInput(target);
         try {
             // 如果 target 不是绝对路径, 尝试按分支名查找
             let worktreePath = target;
@@ -1111,10 +1103,17 @@ export class WorktreeManager {
                 if (!found) return `Error: No worktree found for branch '${target}'`;
                 worktreePath = found.path;
             }
-            execSync(`git worktree remove "${worktreePath}" --force`, { cwd: WORKDIR, encoding: 'utf8', stdio: 'pipe' });
+            execFileSync('git', ['worktree', 'remove', worktreePath, '--force'], { cwd: WORKDIR, encoding: 'utf8', stdio: 'pipe' });
             return `Removed worktree at ${worktreePath}`;
         } catch (e: any) {
             return `Error removing worktree: ${e.stderr || e.message}`;
+        }
+    }
+
+    /** 输入校验 — 拒绝 shell 元字符 */
+    private _validateInput(input: string): void {
+        if (/[;&|`$()'"\\]/.test(input)) {
+            throw new Error(`Invalid input: contains forbidden shell metacharacters`);
         }
     }
 }
@@ -1366,6 +1365,9 @@ export const ARTIFACT_MGR = globalForAgent.ARTIFACT_MGR || new ArtifactManager()
 export const SESSION_MGR = globalForAgent.SESSION_MGR || new SessionManager();
 export const KNOWLEDGE_MGR = globalForAgent.KNOWLEDGE_MGR || new KnowledgeManager();
 export const MCP_MGR = globalForAgent.MCP_MGR || new McpManager();
+
+// 重导出共享类型 — 保持向后兼容
+export type { WorktreeInfo } from '../types';
 
 // 开发模式: 将实例挂回 global, 下次 HMR 时复用
 

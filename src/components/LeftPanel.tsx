@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { GitBranch, FileText, FileBox, Plus, Trash2 } from 'lucide-react';
 import { Section } from './Section';
 import type { T } from './i18n';
+import type { WorktreeInfo } from '@/lib/types';
 
 export interface Task {
     id: number; subject: string; description: string; status: string;
@@ -13,11 +14,6 @@ export interface Task {
 export interface ArtifactGroup {
     taskId: number | null;
     files: Array<{ name: string; createdAt: string; size: number; description: string }>;
-}
-
-export interface WorktreeInfo {
-    path: string; branch: string; head: string;
-    bare: boolean; locked: boolean; isMain: boolean;
 }
 
 interface Props {

@@ -8,6 +8,7 @@ import { RightPanel } from '@/components/RightPanel';
 import { ChatPanel, type Attachment, type Message } from '@/components/ChatPanel';
 import type { LogEntry } from '@/components/WorkflowView';
 import { useTheme } from '@/hooks/useTheme';
+import type { WorktreeInfo } from '@/lib/types';
 
 export default function Home() {
     const [lang, setLang] = useState<Lang>('zh');
@@ -19,7 +20,7 @@ export default function Home() {
         todos: Array<{ content: string; status: string; activeForm: string }>;
         tasks: Array<{ id: number; subject: string; description: string; status: string; owner: string | null; blockedBy: number[]; blocks: number[] }>;
         teammates: Array<{ name: string; role: string; status: string }>;
-        worktrees: Array<{ path: string; branch: string; head: string; bare: boolean; locked: boolean; isMain: boolean }>;
+        worktrees: WorktreeInfo[];
         bgTasks: Array<{ id: string; command: string; status: string }>;
         cronTasks: Array<{ id: string; command: string; intervalMs: number; lastRun: string | null; count: number }>;
         artifacts: Array<{ taskId: number | null; files: Array<{ name: string; createdAt: string; size: number; description: string }> }>;
@@ -335,6 +336,7 @@ export default function Home() {
     }, []);
 
     const handleUpdateTaskStatus = useCallback(async (id: number, status: string) => {
+        const prevTasks = globalState.tasks;
         setGlobalState(prev => ({
             ...prev,
             tasks: prev.tasks.map(t => t.id === id ? { ...t, status } : t)
@@ -347,10 +349,10 @@ export default function Home() {
             });
             if (!res.ok) throw new Error('Failed');
         } catch {
-            // Revert on error by re-fetching
-            setGlobalState(prev => ({ ...prev }));
+            // Revert on error
+            setGlobalState(prev => ({ ...prev, tasks: prevTasks }));
         }
-    }, []);
+    }, [globalState.tasks]);
 
     const handleDeleteTask = useCallback(async (id: number) => {
         setGlobalState(prev => ({
