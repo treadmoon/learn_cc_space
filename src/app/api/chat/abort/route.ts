@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { triggerAbort } from '../route';
+import { triggerAbort } from '@/lib/agent/abort';
 
 export async function POST() {
     triggerAbort();

@@ -1,8 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from './tools';
+import { mkdirSync } from './tools/fs';
 import OpenAI from 'openai';
+import { DEMO_MODE } from './llm-client';
+import { getDemoEmbedding } from './mock-responses';
 
 const WORKDIR = process.cwd();
 const KNOWLEDGE_DIR = path.join(WORKDIR, '.knowledge');
@@ -205,6 +207,7 @@ export class KnowledgeManager {
      */
     private async _embed(texts: string[]): Promise<number[][]> {
         if (texts.length === 0) return [];
+        if (DEMO_MODE) return texts.map(t => getDemoEmbedding(t));
         const response = await this.client.embeddings.create({
             model: this.embeddingModel,
             input: texts,

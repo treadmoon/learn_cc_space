@@ -13,7 +13,7 @@
  */
 import OpenAI from 'openai';
 import { client, MODEL } from './llm-client';
-import { runBash, runRead, runWrite, runEdit } from './tools';
+import { runBash, runRead, runWrite, runEdit } from './tools/fs';
 import {
     TASK_MGR, TODO, BG_MGR, CRON_MGR, SKILLS,
     ARTIFACT_MGR, KNOWLEDGE_MGR, MCP_MGR,

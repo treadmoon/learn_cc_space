@@ -53,7 +53,7 @@ export function maybePersistOutput(toolUseId: string, output: string, triggerCha
     if (typeof output !== 'string') return String(output);
     const trigger = triggerChars !== null ? triggerChars : PERSIST_OUTPUT_TRIGGER_CHARS_DEFAULT;
     if (output.length <= trigger) return output;
-    
+
     const storedPath = persistToolResult(toolUseId, output);
     const { text: preview, hasMore } = previewSlice(output, PERSISTED_PREVIEW_CHARS);
     let marker = `${PERSISTED_OPEN}\n`;
@@ -67,19 +67,19 @@ export function maybePersistOutput(toolUseId: string, output: string, triggerCha
 }
 
 const BLOCKED_PATTERNS = [
-    /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?\/(?!\S*\.)/i,  // rm -rf / or rm /
+    /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?\/(?!\S*\.)/i,
     /\bsudo\b/i,
     /\bsu\s+/i,
     /\b(shutdown|reboot|halt|poweroff)\b/i,
     /\bmkfs\b/i,
     /\bdd\s+.*of=\/dev\//i,
     />\s*\/dev\/sd/i,
-    /\bcurl\b.*\|\s*(ba)?sh/i,                          // curl | sh
+    /\bcurl\b.*\|\s*(ba)?sh/i,
     /\bwget\b.*\|\s*(ba)?sh/i,
-    /\b(nc|ncat|netcat)\b.*-[elp]/i,                    // reverse shells
-    /\bchmod\s+[0-7]*777\s+\//i,                        // chmod 777 /
+    /\b(nc|ncat|netcat)\b.*-[elp]/i,
+    /\bchmod\s+[0-7]*777\s+\//i,
     /\bchown\b.*\s+\//i,
-    /:\(\)\s*\{.*:\|:.*&\s*\}\s*;/,                       // fork bomb
+    /:\(\)\s*\{.*:\|:.*&\s*\}\s*;/,
 ];
 
 export function runBash(command: string, toolUseId: string = ''): string {
@@ -92,12 +92,12 @@ export function runBash(command: string, toolUseId: string = ''): string {
             timeout: 120 * 1000,
             encoding: 'utf8'
         });
-        
+
         const { stdout, stderr, error } = result;
         if (error) {
             return `Error: ${error.message}`;
         }
-        
+
         let out = (stdout || '').trim() + (stderr || '').trim();
         if (!out) return '(no output)';
         out = maybePersistOutput(toolUseId, out, PERSIST_OUTPUT_TRIGGER_CHARS_BASH);
@@ -133,7 +133,6 @@ export function runWrite(filePath: string, content: string): string {
         try {
             fs.renameSync(tmpPath, fullPath);
         } catch {
-            // rename can fail across filesystems; fall back to direct write
             try { fs.unlinkSync(tmpPath); } catch {}
             fs.writeFileSync(fullPath, content, 'utf8');
         }

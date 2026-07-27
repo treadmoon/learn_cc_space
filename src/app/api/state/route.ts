@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { TASK_MGR, TODO, TEAM_MGR, WORKTREE_MGR, BG_MGR, CRON_MGR, ARTIFACT_MGR, KNOWLEDGE_MGR, type TaskFilter, type WorktreeInfo } from '@/lib/agent/managers';
+import { DEMO_MODE } from '@/lib/agent/llm-client';
 
 export const runtime = 'nodejs';
 
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest) {
         cronTasks: CRON_MGR.listActive(),
         auditLog: TASK_MGR.getAuditLog(undefined, 20),
         knowledge: KNOWLEDGE_MGR.getStats(),
+        demoMode: DEMO_MODE,
     };
 
     // ETag 仅基于稳定状态计算 (不含一次性通知)

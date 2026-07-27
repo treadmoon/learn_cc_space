@@ -26,9 +26,10 @@ export default function Home() {
         artifacts: Array<{ taskId: number | null; files: Array<{ name: string; createdAt: string; size: number; description: string }> }>;
         auditLog: Array<{ ts: string; action: string; taskId: number; actor: string; details: Record<string, unknown> }>;
         knowledge: { docCount: number; chunkCount: number; sources: Array<{ source: string; chunkCount: number; ingestedAt: string }> };
+        demoMode: boolean;
     }>({
         todos: [], tasks: [], teammates: [], worktrees: [], bgTasks: [], cronTasks: [], artifacts: [], auditLog: [],
-        knowledge: { docCount: 0, chunkCount: 0, sources: [] }
+        knowledge: { docCount: 0, chunkCount: 0, sources: [] }, demoMode: false
     });
     const [telemetry, setTelemetry] = useState({ totalSession: 0, lastRequest: 0, totalRequests: 0, lastPrompt: 0, lastCompletion: 0 });
     const [taskFilter, setTaskFilter] = useState<{ status?: string; owner?: string; keyword?: string }>({});
@@ -73,7 +74,8 @@ export default function Home() {
                     teammates: data.teammates || [], worktrees: data.worktrees || [],
                     bgTasks: data.bgTasks || [], cronTasks: data.cronTasks || [],
                     artifacts: data.artifacts || [], auditLog: data.auditLog || [],
-                    knowledge: data.knowledge || { docCount: 0, chunkCount: 0, sources: [] }
+                    knowledge: data.knowledge || { docCount: 0, chunkCount: 0, sources: [] },
+                    demoMode: data.demoMode || false
                 });
                 if (data.bgNotifs?.length) {
                     const bgMsgs = data.bgNotifs.map((n: { task_id: string; status: string; result: string }) => ({
@@ -369,7 +371,14 @@ export default function Home() {
     }, []);
 
     return (
-        <div className="flex h-screen w-full overflow-hidden p-2 md:p-4 gap-2 md:gap-4">
+        <div className="flex flex-col h-screen w-full overflow-hidden">
+            {globalState.demoMode && (
+                <div className="shrink-0 flex items-center justify-center gap-2 py-1.5 px-4 text-xs font-medium tracking-wide" style={{ background: 'var(--color-accent)', color: '#fff' }}>
+                    <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse" />
+                    DEMO MODE — 使用模拟数据，不消耗 Token
+                </div>
+            )}
+        <div className="flex flex-1 min-h-0 w-full p-2 md:p-4 gap-2 md:gap-4">
             {/* Left Panel — desktop */}
             <div className="hidden md:flex flex-col w-64 xl:w-72 panel-side rounded-2xl overflow-hidden shrink-0">
                 <LeftPanel
@@ -440,6 +449,7 @@ export default function Home() {
                     </div>
                 </div>
             )}
+        </div>
         </div>
     );
 }

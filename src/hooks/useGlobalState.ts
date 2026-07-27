@@ -9,9 +9,10 @@ export interface GlobalState {
     worktrees: WorktreeInfo[];
     bgTasks: Array<{ id: string; command: string; status: string }>;
     cronTasks: Array<{ id: string; command: string; intervalMs: number; lastRun: string | null; count: number }>;
+    demoMode: boolean;
 }
 
-const EMPTY: GlobalState = { todos: [], tasksString: '', teammates: [], worktrees: [], bgTasks: [], cronTasks: [] };
+const EMPTY: GlobalState = { todos: [], tasksString: '', teammates: [], worktrees: [], bgTasks: [], cronTasks: [], demoMode: false };
 
 export function useGlobalState(onBgNotifs?: (msgs: string[]) => void) {
     const [state, setState] = useState<GlobalState>(EMPTY);
@@ -38,7 +39,8 @@ export function useGlobalState(onBgNotifs?: (msgs: string[]) => void) {
                     teammates: data.teammates || [],
                     worktrees: data.worktrees || [],
                     bgTasks: data.bgTasks || [],
-                    cronTasks: data.cronTasks || []
+                    cronTasks: data.cronTasks || [],
+                    demoMode: data.demoMode || false,
                 });
                 if (data.bgNotifs?.length && onBgNotifsRef.current) {
                     onBgNotifsRef.current(data.bgNotifs.map((n: { task_id: string; status: string; result: string }) => `[BACKGROUND TASK: ${n.task_id}] Status: ${n.status}\nOutput:\n${n.result}`));
